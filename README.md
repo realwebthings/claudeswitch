@@ -120,6 +120,11 @@ claudeswitch install-shim    # make the command work outside Claude Code
 
 Or ask Claude: *"switch to my work account"*, *"which account am I on?"*
 
+**Stuck?** Run `/claudeswitch:help` inside Claude Code. It collects the actual
+state (parked slots, active account, running sessions, missing identity files)
+and walks you through the specific cause — rather than making you match your
+symptom against this README.
+
 **Restart Claude Code after switching.** A running session has already read the
 credential. For the VSCode sidebar, reload the window.
 
