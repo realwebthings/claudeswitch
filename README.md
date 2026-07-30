@@ -1,9 +1,26 @@
 # claudeswitch
 
-Switch between multiple Claude Code accounts on one Mac without re-running
+Switch between multiple Claude Code accounts on one machine without re-running
 `/login` every time.
 
-**macOS only.** Requires `python3` and `curl` (both preinstalled).
+Requires `python3` and `curl`.
+
+| Platform | Status | Credentials are stored in |
+| --- | --- | --- |
+| macOS | Supported, tested | login Keychain, via `security` |
+| Linux | Supported, tested | `~/.claude/.credentials.json` (mode 600) |
+| Windows + WSL | Supported — use the Linux path inside your WSL distro | same as Linux |
+| Windows native | Best-effort, **not verified** | see below |
+
+**Windows native:** claudeswitch needs a bash (Git Bash / MSYS) and a Claude Code
+install that keeps its token in `.credentials.json` under your user profile. If
+your install uses Windows Credential Manager instead, claudeswitch will tell you
+so rather than pretend to switch — running Claude Code under WSL is the reliable
+option today. Reports from real Windows setups are welcome in
+[issues](https://github.com/realwebthings/claudeswitch/issues).
+
+The storage backend is detected automatically; override it with
+`CLAUDESWITCH_BACKEND=keychain|file` if you need to.
 
 ---
 
@@ -14,9 +31,13 @@ Four steps. Details for each are below.
 ```
 1. install the plugin        /plugin install (or claude plugin install)
 2. claudeswitch install-shim   makes the command work outside Claude Code
-3. /login + save, per account  one login per account, ever
+3. save, THEN /login, per account   one login per account, ever
 4. claudeswitch use <name>     switch, then restart Claude Code
 ```
+
+**Order matters in step 3:** `save` the account you're on *before* running
+`/login`, because `/login` overwrites the live credential. Park first and nothing
+is ever lost.
 
 **Stuck at any point?** Run `/claudeswitch:help` inside Claude Code. It reads
 your actual state and tells you the specific cause — faster than matching a
@@ -98,7 +119,7 @@ For each account:
 2. **Quit Claude Code completely** — *you.* Include any extension sidebar.
    Verify:
    ```bash
-   pgrep -fl 'native-binary/claude|Claude\.app' # expect no output
+   pgrep -fl 'native-binary/claude|/claude$|Claude\.app|claude-desktop'  # expect no output
    ```
    Orphans can be cleared with `pkill -f 'native-binary/claude'`.
 3. **Park it** — *you or Claude.* From a terminal:
@@ -107,6 +128,11 @@ For each account:
    ```
    `save` prints which account it actually parked. Check that line matches what
    you intended before moving on.
+
+**Park each account before logging in as the next one.** Step 3 has to happen
+before you return to step 1 for the second account — `/login` overwrites the live
+credential, so an unparked account is lost at that moment. If you do forget, the
+next session warns you that the active account isn't parked.
 
 Repeat for the next account, then check both:
 
@@ -204,9 +230,57 @@ Both ignore the session *hosting* them, so running from inside a Claude Code
 terminal is fine — only other sessions count.
 
 `use` can be forced with `CLAUDESWITCH_FORCE=1` if you know the other session is
-idle. `save` has a stronger check that cannot be forced: it compares the
-Keychain token against `~/.claude.json` and aborts if they disagree, because
-that mismatch is what corrupts a slot.
+idle. `save` has a stronger check that cannot be forced: it compares the stored
+token against `~/.claude.json` and aborts if they disagree, because that mismatch
+is what corrupts a slot.
+
+---
+
+## Not losing an account
+
+Losing a token costs a `/login`, so two guards are on by default.
+
+**`use` parks the outgoing account first.** Switching overwrites the live
+credential, so if you were logged in as an account that isn't in a slot, its token
+would be gone. Instead it lands in `_previous`:
+
+```
+$ claudeswitch use work
+  parked outgoing account to '_previous' (recover with: claudeswitch use _previous)
+active account = slot 'work'
+```
+
+Nothing is written when the outgoing account is already parked — the message says
+so, and `_previous` keeps whatever it was holding.
+
+**`save` won't silently clobber a different account.** Re-saving the same account
+into its own slot is the normal refresh path and stays quiet, but pointing an
+existing slot at a *different* account needs `CLAUDESWITCH_FORCE=1`.
+
+**What still isn't protected: `/login` itself.** That's Claude Code's own command
+and claudeswitch can't intercept it, so park *before* logging in:
+
+```bash
+claudeswitch save work     # park the current account FIRST
+/login                     # now safe — this overwrites the live credential
+claudeswitch save personal
+```
+
+As a net, the SessionStart hook notices when the active account is in no slot and
+tells you to `save` it. To park such accounts automatically instead:
+
+```bash
+mkdir -p ~/.claude/claudeswitch && echo 1 > ~/.claude/claudeswitch/autopark
+```
+
+(If you set `CLAUDE_CONFIG_DIR`, put the flag under that directory instead —
+`"$CLAUDE_CONFIG_DIR"/claudeswitch/autopark`. The warning message prints the exact
+path for your setup.)
+
+That's opt-in because it writes a token copy to disk without asking. Either way,
+"already parked" is judged by **account**, not by token — Claude Code rotates
+tokens on refresh, so a slot holding a stale token for the same account still
+counts as parked.
 
 ---
 
@@ -214,7 +288,11 @@ that mismatch is what corrupts a slot.
 
 Logging in writes **two** pieces of state. Both must be swapped together.
 
-### 1. OAuth tokens — one Keychain entry
+### 1. OAuth tokens — one credential slot
+
+Where the token lives depends on the platform.
+
+**macOS** — one login Keychain entry:
 
 ```
 service = "Claude Code-credentials"
@@ -230,6 +308,20 @@ copies under names Claude Code doesn't read:
 "Claude Code-credentials-work"       <- parked, survives /login
 "Claude Code-credentials-personal"   <- parked, survives /login
 ```
+
+**Linux, WSL, Windows/Git Bash** — one file, `~/.claude/.credentials.json`
+(mode 600). Parked copies are sibling files in the directory claudeswitch owns:
+
+```
+~/.claude/.credentials.json               <- active; Claude Code reads only this
+~/.claude-accounts/work.credentials.json      <- parked, survives /login
+~/.claude-accounts/personal.credentials.json  <- parked, survives /login
+```
+
+Every write goes to a temp file in the same directory and is then `mv`'d into
+place, so an interrupted switch can't leave a half-written credential that locks
+you out of Claude Code. Tokens are written under `umask 077` and the parking
+directory is `700` — a parked token is never more readable than the live one.
 
 ### 2. Displayed identity — `~/.claude.json`
 
@@ -248,7 +340,10 @@ atomically.
 ### Why `CLAUDE_CONFIG_DIR` isn't enough
 
 That env var swaps settings, plugins, and history. It does **not** scope the
-Keychain or `~/.claude.json` — every config dir shares both. It's useful
+credential store or `~/.claude.json` — every config dir shares both. (On the
+file backend the credential path *is* inside the config dir, and claudeswitch
+honours `CLAUDE_CONFIG_DIR` accordingly — but `~/.claude.json`, which carries the
+displayed identity, still sits outside it, so a switch is still needed.) It's useful
 alongside this tool (separate settings per account) but cannot switch accounts
 on its own.
 
@@ -294,14 +389,24 @@ Two details worth copying exactly:
 Each parked slot holds a full OAuth access + refresh token. Any one of them
 grants complete access to that account.
 
-They live in your login Keychain with the same protection as the credential
-Claude Code already stores — nothing is written to disk in plaintext. The real
-change is **N token copies instead of 1**: anything that can read your unlocked
-login Keychain now finds every account you've parked.
+In every case a parked slot gets **the same protection Claude Code already gives
+the live credential on that platform** — claudeswitch does not downgrade storage.
+The real change is **N token copies instead of 1**: whatever can read the live
+credential can now read every account you've parked.
+
+- **macOS** — parked in your login Keychain, like the original. Nothing is
+  written to disk in plaintext.
+- **Linux / WSL / Windows** — Claude Code itself stores the token as a plaintext
+  file (`~/.claude/.credentials.json`, mode 600); parked slots are the same
+  format, mode 600, in a `700` directory. So the tokens are readable by your own
+  user account and by root, exactly as the live one already is. If you back up
+  your home directory, **your backups now contain N tokens** — exclude
+  `~/.claude-accounts/` if that matters. Disk encryption is what protects these
+  at rest.
 
 If that's not acceptable, use `ANTHROPIC_API_KEY` per terminal instead. That
-bypasses the Keychain entirely, but usage is billed per token rather than drawing
-on a Pro/Team seat, and a key in a settings file is plaintext on disk.
+bypasses the credential store entirely, but usage is billed per token rather than
+drawing on a Pro/Team seat, and a key in a settings file is plaintext on disk.
 
 ---
 
@@ -366,8 +471,19 @@ PATH inside Claude Code sessions. Run `install-shim` once from inside Claude Cod
 then the command works anywhere. If it still isn't found afterwards, the shim
 directory isn't on your PATH — `install-shim` prints the line to add.
 
-**Keychain permission prompts**
+**Keychain permission prompts** (macOS)
 macOS asking about the `security` command. Choose "Always Allow".
+
+**`no credential file at ~/.claude/.credentials.json`** (Linux/WSL/Windows)
+claudeswitch found no live credential to read. Open Claude Code and `/login`
+first. If you *are* logged in and the file doesn't exist, your install keeps its
+token somewhere else — on native Windows that's likely Credential Manager, which
+isn't supported yet; run Claude Code under WSL instead. Please
+[open an issue](https://github.com/realwebthings/claudeswitch/issues) with your
+setup.
+
+**Wrong backend detected**
+Force it: `CLAUDESWITCH_BACKEND=file` or `CLAUDESWITCH_BACKEND=keychain`.
 
 ---
 
@@ -386,18 +502,46 @@ Server-side. No local setup avoids it.
 
 ## Caveats
 
-This depends on two unofficial internals: the Keychain service name
-`Claude Code-credentials`, and the `oauthAccount` key in `~/.claude.json`.
-Neither is public API. A Claude Code update could rename or relocate either, in
-which case this breaks — the script checks what it finds and refuses to act on
-surprises rather than half-applying a switch, but it cannot survive a rename.
+This depends on unofficial internals: the credential location (the Keychain
+service name `Claude Code-credentials` on macOS, or `.credentials.json` inside the
+config dir elsewhere), and the `oauthAccount` key in `~/.claude.json`. None is
+public API. A Claude Code update could rename or relocate any of them, in which
+case this breaks — the script checks what it finds and refuses to act on surprises
+rather than half-applying a switch, but it cannot survive a rename.
+
+Windows-native support is best-effort and unverified; WSL is the tested path for
+Windows users.
 
 The VSCode extension sidebar always uses `~/.claude` settings regardless of
 account, since it ignores `CLAUDE_CONFIG_DIR`. Only the active credential
 follows a switch there.
 
-There is no true per-window account isolation: the active Keychain slot is
-global to the machine. One account is active at a time.
+There is no true per-window account isolation: the active credential is global to
+the machine. One account is active at a time.
+
+---
+
+## Testing
+
+macOS is tested by using it. The Linux/WSL file backend is verified in
+containers, because it can't run natively on a Mac and faking `uname` would only
+exercise the branch, not the behaviour:
+
+```bash
+./test/run-docker.sh              # 4 distros + shellcheck
+./test/run-docker.sh alpine       # one distro
+./test/run-docker.sh shellcheck   # lint only
+```
+
+66 checks covering the save/use/rm lifecycle, that a switch moves both the token
+and the displayed identity, that unrelated `~/.claude.json` keys survive, file
+modes (600/700), atomic writes leaving no temp files, `CLAUDE_CONFIG_DIR`
+handling, error paths and exit codes, corrupt/empty slots, `install-shim` profile
+selection per shell, and the SessionStart hook.
+
+Alpine is in the matrix on purpose — it uses BusyBox `find`/`stat`/`sed`, where
+non-portable shell usage fails while passing on Debian. The repo is mounted
+read-only, so tests can't touch your working tree.
 
 ---
 

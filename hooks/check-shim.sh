@@ -41,6 +41,49 @@ if [ -d "$CACHE_ROOT" ]; then
   fi
 fi
 
+# ---------------------------------------------------- unparked-account check ---
+# If the active account matches no parked slot, a later /login destroys its token
+# with no way back. Report that (or park it, if the user opted in).
+#
+# Default is report-only: writing a token copy to disk is the user's call, not a
+# plugin's. Opt in with
+#   echo 1 > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/claudeswitch/autopark
+# Runs before the shim notice below, which exits early for users who already have
+# a shim installed.
+#
+# Any failure here is non-fatal: a SessionStart hook must never block a session.
+autopark_check() {
+  local cs auto out slot
+  # Prefer the plugin's own bin: this hook runs before most users have installed
+  # a shim, so relying on `command -v` would silently skip the check for exactly
+  # the people who need it most.
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -x "$CLAUDE_PLUGIN_ROOT/bin/claudeswitch" ]; then
+    cs="$CLAUDE_PLUGIN_ROOT/bin/claudeswitch"
+  else
+    cs="$(command -v claudeswitch 2>/dev/null)"
+  fi
+  [ -n "$cs" ] && [ -x "$cs" ] || return 0
+  auto="$STATE_DIR/autopark"
+
+  # A quiet local check: prints the active account's email only if it is in no
+  # parked slot. Needs one API call to name the account, so it stays silent when
+  # offline rather than delaying startup with a useless warning.
+  out="$("$cs" internal-unparked 2>/dev/null)" || return 0
+  [ -n "$out" ] || return 0          # empty = already parked, or unresolvable
+
+  if [ -f "$auto" ]; then
+    slot="$("$cs" internal-autopark 2>/dev/null)" || return 0
+    [ -n "$slot" ] && echo "claudeswitch: parked the active account as '$slot' (auto-park is on)."
+  else
+    echo "claudeswitch: the active account ($out) is not parked in any slot."
+    echo "  A future /login would overwrite it with no way back. Park it with:"
+    echo "    claudeswitch save <name>"
+    echo "  To park unrecognized accounts automatically from now on:"
+    echo "    mkdir -p \"$STATE_DIR\" && echo 1 > \"$auto\""
+  fi
+}
+autopark_check 2>/dev/null || true
+
 # Already installed anywhere on PATH? Nothing to say.
 if command -v claudeswitch >/dev/null 2>&1; then
   # A plugin-cache path means we are seeing the plugin's own bin/, not a shim,

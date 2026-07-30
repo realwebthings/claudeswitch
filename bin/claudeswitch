@@ -9,6 +9,11 @@
 #   claudeswitch rm <name>       delete a parked slot
 #   claudeswitch install-shim    make this command available outside Claude Code
 #
+# Losing an account is the failure that costs a /login, so two guards are on by
+# default: `use` parks the outgoing credential to "_previous" if it isn't already
+# in a slot, and `save` refuses to overwrite a slot holding a different account.
+# Both are bypassed with CLAUDESWITCH_FORCE=1.
+#
 # Run install-shim once after installing the plugin. Claude Code only puts a
 # plugin's bin/ on PATH inside its own sessions, but switching accounts requires
 # Claude Code to be quit — so the command must work in a plain terminal too.
@@ -17,28 +22,37 @@
 # ------------------
 # Logging in writes TWO pieces of state, and both must be swapped together:
 #
-#   1. OAuth tokens — one macOS Keychain entry:
-#        service "Claude Code-credentials", account "$USER"
-#      /login overwrites it, destroying whichever account was there before.
+#   1. OAuth tokens — where these live depends on the platform (see below).
+#      /login overwrites them, destroying whichever account was there before.
 #
 #   2. The displayed identity — the "oauthAccount" key in ~/.claude.json.
 #      Swap only the token and the UI keeps showing the previous email while
 #      requests authenticate as the new account.
 #
 # Neither is scoped by CLAUDE_CONFIG_DIR: that env var swaps settings, plugins
-# and history, but every config dir shares one Keychain slot and one
-# ~/.claude.json. So this script parks each account's token in its own Keychain
-# slot plus an identity file, and copies the pair you want into place on demand.
+# and history, but every config dir shares one credential store and one
+# ~/.claude.json. So this script parks each account's token in its own slot plus
+# an identity file, and copies the pair you want into place on demand.
 #
-#   "Claude Code-credentials"          <- active; Claude Code reads only this
-#   "Claude Code-credentials-<name>"   <- parked copy, survives /login
+#   <live credential>                 <- active; Claude Code reads only this
+#   <slot copy named "<name>">        <- parked copy, survives /login
 #   ~/.claude-accounts/<name>.oauthAccount.json
 #
 # Both parts are unofficial internals. A Claude Code update could rename either,
 # so this script verifies what it finds and refuses to act on surprises rather
 # than half-applying a switch.
 #
-# Requires: macOS (security), python3, curl.
+# Platforms
+# ---------
+#   macOS         Keychain, via `security`. Service "Claude Code-credentials".
+#   Linux / WSL   ~/.claude/.credentials.json, a mode-600 file. Slots are
+#                 sibling files: ~/.claude-accounts/<name>.credentials.json
+#   Windows       Same credentials file, under the Windows user profile. Needs a
+#                 bash (Git Bash / MSYS). BEST-EFFORT: not verified on a real
+#                 Windows install — if Claude Code there uses Credential Manager
+#                 rather than a file, this reports that instead of guessing.
+#
+# Requires: python3, curl, and on macOS the `security` command.
 
 set -euo pipefail
 
@@ -46,19 +60,130 @@ LIVE_SVC="Claude Code-credentials"
 # Keychain items are stored under the account name. $USER is not guaranteed to
 # be exported (cron, minimal shells), so fall back to asking the system.
 ACCT="${USER:-$(id -un)}"
+# `set -u` would abort on an unset HOME (some cron/service environments), so
+# resolve it from the password database instead of failing.
+HOME="${HOME:-$(eval echo "~$ACCT")}"
 GLOBAL_JSON="${HOME}/.claude.json"
 PARK_DIR="${HOME}/.claude-accounts"
 PROFILE_URL="https://api.anthropic.com/api/oauth/profile"
+# Where the file-based backends keep the live credential. Honours
+# CLAUDE_CONFIG_DIR because on these platforms the credential file lives *inside*
+# the config dir, unlike the macOS Keychain which is global.
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+LIVE_FILE="$CONFIG_DIR/.credentials.json"
 
 die() { echo "claudeswitch: $*" >&2; exit 1; }
 
-# ---------------------------------------------------------------- preflight ---
+# ------------------------------------------------------------------ backend ---
+# All platform-specific knowledge is confined to four operations:
+#   backend_read_live / backend_write_slot / backend_slot_names / backend_*
+# Everything below this section is platform-neutral.
+
+detect_backend() {
+  [ -n "${CLAUDESWITCH_BACKEND:-}" ] && { BACKEND="$CLAUDESWITCH_BACKEND"; return 0; }
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    Darwin)                      BACKEND="keychain" ;;
+    Linux)                       BACKEND="file" ;;   # covers WSL
+    CYGWIN*|MINGW*|MSYS*)        BACKEND="file" ;;   # Git Bash on Windows
+    *)                           BACKEND="file" ;;   # assume a file; verified below
+  esac
+}
 
 require_deps() {
-  command -v security >/dev/null 2>&1 || die "'security' not found — this script is macOS-only"
-  command -v python3  >/dev/null 2>&1 || die "python3 not found"
-  command -v curl     >/dev/null 2>&1 || die "curl not found"
+  command -v python3 >/dev/null 2>&1 || die "python3 not found"
+  command -v curl    >/dev/null 2>&1 || die "curl not found"
+  if [ "$BACKEND" = "keychain" ]; then
+    command -v security >/dev/null 2>&1 \
+      || die "'security' not found — expected on macOS. Set CLAUDESWITCH_BACKEND=file to use file storage."
+  fi
 }
+
+# The file backend is only usable if Claude Code actually stores a credential
+# file here. On a native Windows install that keeps tokens in Credential Manager
+# there would be nothing to find, and silently "succeeding" would be worse than
+# saying so. Called only by commands that need the LIVE credential.
+assert_file_backend_usable() {
+  [ -f "$LIVE_FILE" ] && return 0
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    CYGWIN*|MINGW*|MSYS*)
+      die "no credential file at $LIVE_FILE.
+  On Windows, claudeswitch supports Claude Code installs that store the token in
+  that file. If your install keeps it in Windows Credential Manager instead,
+  claudeswitch cannot switch accounts for it yet — please report your setup at
+  https://github.com/realwebthings/claudeswitch/issues
+  Running Claude Code under WSL is a supported alternative." ;;
+    *)
+      die "no credential file at $LIVE_FILE — open Claude Code and run /login first" ;;
+  esac
+}
+
+# --- keychain (macOS) ---------------------------------------------------------
+
+keychain_read_live() {
+  security find-generic-password -s "$LIVE_SVC" -a "$ACCT" -w 2>/dev/null \
+    || die "no active credential found — open Claude Code and run /login first"
+}
+keychain_read_slot() {
+  security find-generic-password -s "${LIVE_SVC}-$1" -a "$ACCT" -w 2>/dev/null
+}
+keychain_write_live() { security add-generic-password -U -s "$LIVE_SVC" -a "$ACCT" -w "$1"; }
+keychain_write_slot() { security add-generic-password -U -s "${LIVE_SVC}-$1" -a "$ACCT" -w "$2"; }
+keychain_slot_exists() {
+  security find-generic-password -s "${LIVE_SVC}-$1" -a "$ACCT" >/dev/null 2>&1
+}
+keychain_delete_slot() {
+  security delete-generic-password -s "${LIVE_SVC}-$1" -a "$ACCT" >/dev/null
+}
+keychain_slot_names() {
+  security dump-keychain 2>/dev/null \
+    | grep '"svce"' \
+    | sed -n 's/.*"svce"<blob>="'"$LIVE_SVC"'-\(.*\)"/\1/p' \
+    | sort -u
+}
+
+# --- file (Linux, WSL, Windows/Git Bash) --------------------------------------
+# Parked slots live beside the identity files in ~/.claude-accounts so one
+# directory holds everything claudeswitch owns. The live file is written with a
+# umask so the token never exists group/world-readable, even briefly.
+
+file_slot_path() { echo "$PARK_DIR/$1.credentials.json"; }
+
+file_read_live() {
+  assert_file_backend_usable
+  cat "$LIVE_FILE"
+}
+file_read_slot() { cat "$(file_slot_path "$1")" 2>/dev/null; }
+
+# Write atomically: a half-written credential file would lock the user out of
+# Claude Code entirely, which is far worse than a failed switch.
+_file_write() {
+  local dest="$1" data="$2" tmp
+  tmp="$(dirname "$dest")/.claudeswitch.$$.tmp"
+  ( umask 077; printf '%s' "$data" > "$tmp" )
+  mv -f "$tmp" "$dest"
+  chmod 600 "$dest" 2>/dev/null || true
+}
+file_write_live() { _file_write "$LIVE_FILE" "$1"; }
+file_write_slot() { mkdir -p "$PARK_DIR"; chmod 700 "$PARK_DIR" 2>/dev/null || true; _file_write "$(file_slot_path "$1")" "$2"; }
+file_slot_exists() { [ -f "$(file_slot_path "$1")" ]; }
+file_delete_slot() { rm -f "$(file_slot_path "$1")"; }
+file_slot_names() {
+  [ -d "$PARK_DIR" ] || return 0
+  # Basename minus the suffix. `find` avoids a literal-glob match on an empty dir.
+  find "$PARK_DIR" -maxdepth 1 -name '*.credentials.json' 2>/dev/null \
+    | sed 's#.*/##; s#\.credentials\.json$##' \
+    | sort -u
+}
+
+# --- dispatch ----------------------------------------------------------------
+
+read_live()   { "${BACKEND}_read_live"; }
+read_slot()   { "${BACKEND}_read_slot" "$1"; }
+write_live()  { "${BACKEND}_write_live" "$1"; }
+write_slot()  { "${BACKEND}_write_slot" "$1" "$2"; }
+slot_exists() { "${BACKEND}_slot_exists" "$1"; }
+delete_slot() { "${BACKEND}_delete_slot" "$1"; }
+slot_names()  { "${BACKEND}_slot_names"; }
 
 # --------------------------------------------------------------- sessions -----
 
@@ -73,10 +198,20 @@ running_session_pids() {
     p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
   done
   # Covers the VSCode/JetBrains extension (native-binary/claude), a CLI install
-  # on PATH (/claude), and the desktop app (Claude.app). Anything that holds the
-  # credential open needs to be caught here, whichever way Claude Code was
-  # installed — the CLI is not required for this tool to work.
-  for p in $(pgrep -f 'native-binary/claude|/claude$|Claude\.app' 2>/dev/null || true); do
+  # on PATH (/claude), and the desktop app (Claude.app on macOS, claude-desktop
+  # or Claude.exe elsewhere). Anything that holds the credential open needs to be
+  # caught here, whichever way Claude Code was installed — the CLI is not
+  # required for this tool to work.
+  #
+  # pgrep is absent on Git Bash; there `ps -W` lists Windows processes instead.
+  local pat='native-binary/claude|/claude$|Claude\.app|claude-desktop|[Cc]laude\.exe'
+  local found=""
+  if command -v pgrep >/dev/null 2>&1; then
+    found="$(pgrep -f "$pat" 2>/dev/null || true)"
+  else
+    found="$(ps -W 2>/dev/null | grep -Ei 'claude' | awk '{print $1}' || true)"
+  fi
+  for p in $found; do
     case " $mine " in *" $p "*) continue ;; esac
     pids="$pids $p"
   done
@@ -104,23 +239,6 @@ assert_safe_to_switch() {
 }
 
 # ------------------------------------------------------------- credentials ----
-
-read_live() {
-  security find-generic-password -s "$LIVE_SVC" -a "$ACCT" -w 2>/dev/null \
-    || die "no active credential found — open Claude Code and run /login first"
-}
-
-write_slot() {
-  # -U updates in place when the item already exists
-  security add-generic-password -U -s "$1" -a "$ACCT" -w "$2"
-}
-
-slot_names() {
-  security dump-keychain 2>/dev/null \
-    | grep '"svce"' \
-    | sed -n 's/.*"svce"<blob>="'"$LIVE_SVC"'-\(.*\)"/\1/p' \
-    | sort -u
-}
 
 # Resolve a credential blob to its account email via the API. Accounts in the
 # same organization share an organizationUuid, so the email is the only
@@ -152,6 +270,11 @@ except Exception:
 summarize() {
   local data email
   data="$(cat)"
+  # A failed read upstream reports its own error and exits, but `die` inside a
+  # command substitution only kills that subshell — the pipeline still runs with
+  # empty input. Bail quietly rather than adding "(unparseable credential)" noise
+  # after a clear error message.
+  [ -n "$data" ] || return 0
   email="$(identify "$data")"
   [ -n "$email" ] && echo "  account:  $email"
   printf '%s' "$data" | python3 -c '
@@ -189,7 +312,13 @@ PY
 # Rewrite one key in ~/.claude.json. That file also holds project history and
 # MCP state, so back it up and replace atomically.
 restore_identity() {
-  local name="$1" parked="$PARK_DIR/$name.oauthAccount.json"
+  # Two `local`s, not one. In a single `local` the local $name is not yet
+  # assigned when $parked is expanded, so it would read the *global* `name` the
+  # `use` branch happens to set. That global holds the same slot name today, so
+  # the one-line form worked by luck; it breaks the moment this is called from
+  # anywhere else. (shellcheck SC2318)
+  local name="$1"
+  local parked="$PARK_DIR/$name.oauthAccount.json"
   if [ ! -f "$parked" ]; then
     echo "  warning: no parked identity for '$name' — the UI may still show the previous email."
     echo "           log in as that account and run 'claudeswitch save $name' to fix."
@@ -209,14 +338,109 @@ os.replace(tmp, target)
 PY
 }
 
+# --------------------------------------------------------------- auto-park ----
+
+AUTOPARK_SLOT="_previous"
+
+# Read the live credential WITHOUT dying when there is none. `read_live` calls
+# `die` on the file backend, and `die`'s exit propagates out of a command
+# substitution under `set -e` before any `|| true` can mask it — so the internal-*
+# subcommands, which must never fail loudly, need this instead.
+read_live_quiet() {
+  case "$BACKEND" in
+    keychain) security find-generic-password -s "$LIVE_SVC" -a "$ACCT" -w 2>/dev/null || true ;;
+    *)        [ -f "$LIVE_FILE" ] && cat "$LIVE_FILE" 2>/dev/null || true ;;
+  esac
+}
+
+# Does some parked slot already hold this exact credential? Compares the access
+# token rather than the whole blob: two dumps of the same account can differ in
+# whitespace or key order, but the token is the identity.
+token_of() {
+  printf '%s' "$1" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin)["claudeAiOauth"]["accessToken"])' 2>/dev/null \
+    || true
+}
+
+# The parked identity file records which ACCOUNT a slot holds, independent of the
+# token. Cheap and offline — unlike an API lookup, it still works once a parked
+# token has expired.
+slot_identity_email() {
+  local f="$PARK_DIR/$1.oauthAccount.json"
+  [ -f "$f" ] || return 0
+  python3 -c '
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("emailAddress", ""))
+except Exception:
+    print("")
+' "$f" 2>/dev/null || true
+}
+
+# Is the live credential's ACCOUNT already parked in some slot? Prints the slot.
+#
+# Identity is the account, not the token: Claude Code rotates the access token on
+# refresh, so a slot legitimately holds a stale token for the same account.
+# Comparing raw tokens would report a parked account as unparked within hours.
+#
+# Order matters. The email comparison is what's correct; the token comparison is
+# only a fast path for the case where a slot was parked moments ago.
+live_is_parked() {
+  local data="$1" live_tok live_email slot stok semail
+  live_tok="$(token_of "$data")"
+  [ -n "$live_tok" ] || return 1   # unreadable: treat as unparked, caller decides
+
+  # The live account's email: prefer ~/.claude.json (offline, authoritative for
+  # what is displayed) and fall back to an API lookup.
+  live_email="$(json_email)"
+  [ -n "$live_email" ] || live_email="$(identify "$data")"
+
+  while IFS= read -r slot; do
+    [ -n "$slot" ] || continue
+    stok="$(token_of "$(read_slot "$slot" 2>/dev/null || true)")"
+    [ -n "$stok" ] && [ "$stok" = "$live_tok" ] && { echo "$slot"; return 0; }
+    if [ -n "$live_email" ]; then
+      semail="$(slot_identity_email "$slot")"
+      [ -n "$semail" ] && [ "$semail" = "$live_email" ] && { echo "$slot"; return 0; }
+    fi
+  done <<< "$(slot_names)"
+  return 1
+}
+
+# Park the outgoing credential before `use` overwrites it. Without this, using a
+# slot while logged in as an unparked account destroys that account's token and
+# it needs a fresh /login to recover.
+#
+# Skipped when the outgoing account is already parked somewhere — re-parking a
+# known account would just churn the _previous slot and lose the genuinely
+# unparked one it might be holding.
+autopark_outgoing() {
+  local data existing
+  data="$(read_live_quiet)"
+  [ -n "$data" ] || return 0        # nothing live to lose
+  if existing="$(live_is_parked "$data")"; then
+    echo "  (outgoing account already parked as '$existing')"
+    return 0
+  fi
+  write_slot "$AUTOPARK_SLOT" "$data"
+  save_identity "$AUTOPARK_SLOT" >/dev/null 2>&1 || true
+  echo "  parked outgoing account to '$AUTOPARK_SLOT' (recover with: claudeswitch use $AUTOPARK_SLOT)"
+}
+
 # ---------------------------------------------------------------- commands ----
 
 usage() {
-  sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'
+  # The summary plus the command list: everything down to the last "claudeswitch
+  # <cmd>" line. Derived rather than a hardcoded range, which silently truncated
+  # whenever the header was edited.
+  local last
+  last="$(grep -n '^#   claudeswitch ' "$0" | tail -1 | cut -d: -f1)"
+  sed -n "2,${last}p" "$0" | sed 's/^# \{0,1\}//'
   echo
   echo "Run 'claudeswitch help' for the full explanation."
 }
 
+detect_backend
 require_deps
 cmd="${1:-}"; shift || true
 
@@ -233,15 +457,31 @@ case "$cmd" in
     ui_email="$(json_email)"
     if [ -n "$tok_email" ] && [ -n "$ui_email" ] && [ "$tok_email" != "$ui_email" ]; then
       echo "claudeswitch: refusing to save — the active state is inconsistent." >&2
-      echo "  Keychain token : $tok_email" >&2
+      echo "  stored token   : $tok_email" >&2
       echo "  ~/.claude.json : $ui_email" >&2
       echo "  A running session likely refreshed the token. Quit Claude Code," >&2
       echo "  log in as the account you want to park, then retry." >&2
       exit 1
     fi
 
+    # Re-saving the same account into its own slot is the normal refresh path and
+    # must stay silent. But overwriting a slot that holds a DIFFERENT account
+    # destroys that account's token, so require --force for it.
+    if slot_exists "$name" && [ -z "${CLAUDESWITCH_FORCE:-}" ]; then
+      old_email="$(identify "$(read_slot "$name" 2>/dev/null || true)")"
+      if [ -n "$old_email" ] && [ -n "$tok_email" ] && [ "$old_email" != "$tok_email" ]; then
+        echo "claudeswitch: refusing to overwrite slot '$name' — it holds a different account." >&2
+        echo "  slot '$name' : $old_email" >&2
+        echo "  active now   : $tok_email" >&2
+        echo "  Overwriting destroys $old_email's token; it would need a fresh /login." >&2
+        echo "  Pick another slot name, or force it:" >&2
+        echo "    CLAUDESWITCH_FORCE=1 claudeswitch save $name" >&2
+        exit 1
+      fi
+    fi
+
     [ -n "$tok_email" ] && echo "parking account: $tok_email"
-    write_slot "${LIVE_SVC}-${name}" "$data"
+    write_slot "$name" "$data"
     save_identity "$name"
     echo "saved to slot '$name'"
     printf '%s' "$data" | summarize
@@ -251,10 +491,17 @@ case "$cmd" in
     name="${1:-}"; [ -n "$name" ] || die "usage: claudeswitch use <name>"
     # Check the slot exists before the session guard, so a typo reports the
     # typo rather than telling the user to quit their sessions for nothing.
-    data="$(security find-generic-password -s "${LIVE_SVC}-${name}" -a "$ACCT" -w 2>/dev/null)" \
+    slot_exists "$name" \
       || die "no slot '$name' — run 'claudeswitch save $name' while logged in as that account"
+    data="$(read_slot "$name")"
+    [ -n "$data" ] || die "slot '$name' is empty or unreadable — re-park it with 'claudeswitch save $name'"
     assert_safe_to_switch
-    write_slot "$LIVE_SVC" "$data"
+    # Park what we are about to destroy, unless switching to the slot that
+    # already holds it (a no-op switch shouldn't rewrite _previous).
+    if [ "$name" != "$AUTOPARK_SLOT" ]; then
+      autopark_outgoing
+    fi
+    write_live "$data"
     restore_identity "$name"
     echo "active account = slot '$name'"
     printf '%s' "$data" | summarize
@@ -270,7 +517,7 @@ case "$cmd" in
     else
       while IFS= read -r s; do
         [ -n "$s" ] || continue
-        sdata="$(security find-generic-password -s "${LIVE_SVC}-${s}" -a "$ACCT" -w 2>/dev/null || true)"
+        sdata="$(read_slot "$s" 2>/dev/null || true)"
         semail="$(identify "$sdata")"
         idfile="$PARK_DIR/$s.oauthAccount.json"
         [ -f "$idfile" ] && idmark="" || idmark="   [no identity file — run 'save $s' again]"
@@ -283,14 +530,16 @@ case "$cmd" in
     ;;
 
   whoami)
-    read_live | summarize
+    # Capture before summarizing: in a pipeline the exit status is the last
+    # command's, so a failed read would still exit 0.
+    live="$(read_live)" || exit 1
+    printf '%s' "$live" | summarize
     ;;
 
   rm|remove|delete)
     name="${1:-}"; [ -n "$name" ] || die "usage: claudeswitch rm <name>"
-    security find-generic-password -s "${LIVE_SVC}-${name}" -a "$ACCT" >/dev/null 2>&1 \
-      || die "no slot '$name'"
-    security delete-generic-password -s "${LIVE_SVC}-${name}" -a "$ACCT" >/dev/null
+    slot_exists "$name" || die "no slot '$name'"
+    delete_slot "$name"
     rm -f "$PARK_DIR/$name.oauthAccount.json"
     echo "removed slot '$name' (the active credential is untouched)"
     ;;
@@ -321,8 +570,9 @@ case "$cmd" in
       die "$shim already exists and is not a claudeswitch shim — move it aside first"
     fi
 
+    # `env bash` rather than /bin/bash: on NixOS and some BSDs bash isn't there.
     cat > "$shim" <<'SHIM'
-#!/bin/bash
+#!/usr/bin/env bash
 # claudeswitch-shim — forwards to the installed claudeswitch plugin.
 # A plugin's bin/ is only on PATH inside Claude Code sessions, but switching
 # accounts requires Claude Code to be quit. This makes the command available
@@ -352,10 +602,24 @@ SHIM
       *)
         path_line="export PATH=\"$target_dir:\$PATH\""
         # Match the profile to the login shell rather than assuming zsh.
+        # For bash the right file differs by platform: macOS Terminal starts a
+        # login shell (~/.bash_profile), while on Linux the interactive shell
+        # reads ~/.bashrc and ~/.bash_profile often doesn't exist — appending to
+        # a file nothing sources would look like success and change nothing.
         case "${SHELL:-}" in
-          */bash) profile="$HOME/.bash_profile" ;;
+          */bash)
+            if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+              profile="$HOME/.bash_profile"
+            else
+              profile="$HOME/.bashrc"
+            fi
+            ;;
+          */zsh)  profile="$HOME/.zshrc" ;;
           */fish) profile="" ;;   # fish syntax differs; don't guess
-          *)      profile="$HOME/.zshrc" ;;
+          *)
+            # Unknown shell: ~/.profile is the POSIX-sourced fallback.
+            [ "$(uname -s 2>/dev/null)" = "Darwin" ] && profile="$HOME/.zshrc" || profile="$HOME/.profile"
+            ;;
         esac
 
         echo
@@ -369,7 +633,7 @@ SHIM
 
         # A profile usually writes $HOME/... rather than the expanded path, so
         # check both spellings before offering to add a duplicate line.
-        target_tilde="\$HOME${target_dir#$HOME}"
+        target_tilde="\$HOME${target_dir#"$HOME"}"
         if [ -f "$profile" ] && { grep -qF "$target_dir" "$profile" 2>/dev/null \
              || grep -qF "$target_tilde" "$profile" 2>/dev/null; }; then
           echo "$profile already adds it to PATH — this shell just hasn't reloaded."
@@ -406,8 +670,47 @@ SHIM
     esac
     ;;
 
+  internal-unparked)
+    # Quiet, machine-readable: prints the active account's email if it is NOT in
+    # any parked slot, nothing otherwise. Used by the SessionStart hook, so it
+    # must never prompt, never write, and never fail loudly.
+    data="$(read_live_quiet)"
+    [ -n "$data" ] || exit 0
+    live_is_parked "$data" >/dev/null && exit 0
+    # Only report when the account can actually be named; an offline lookup
+    # would otherwise produce a confusing empty warning.
+    email="$(identify "$data")"
+    [ -n "$email" ] && echo "$email"
+    exit 0
+    ;;
+
+  internal-autopark)
+    # Park the active credential under an auto-generated slot name, printing the
+    # slot used. Only invoked when the user has opted in.
+    data="$(read_live_quiet)"
+    [ -n "$data" ] || exit 0
+    live_is_parked "$data" >/dev/null && exit 0
+    # Same consistency rule as `save`: never park a credential whose token and
+    # ~/.claude.json disagree, or the slot ends up mislabeled.
+    tok_email="$(identify "$data")"
+    ui_email="$(json_email)"
+    [ -n "$tok_email" ] && [ -n "$ui_email" ] && [ "$tok_email" != "$ui_email" ] && exit 0
+    # Derive a readable slot name from the email's local part; fall back to a
+    # generic name, and never silently overwrite an existing slot.
+    base="$(printf '%s' "${tok_email%%@*}" | tr -cd 'A-Za-z0-9._-')"
+    [ -n "$base" ] || base="autoparked"
+    slot="$base"; n=2
+    while slot_exists "$slot"; do slot="${base}-${n}"; n=$((n+1)); done
+    write_slot "$slot" "$data"
+    save_identity "$slot" >/dev/null 2>&1 || true
+    echo "$slot"
+    exit 0
+    ;;
+
   help|--help|-h)
-    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+    # Everything from the header down to the last comment line before `set -e`,
+    # so the full explanation stays in sync with the comment block above.
+    sed -n '2,/^set -euo pipefail$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
     ;;
 
   *)
