@@ -14,8 +14,36 @@ Switch between multiple Claude Code accounts on one Mac without re-running
 /plugin install claudeswitch
 ```
 
-This puts `claudeswitch` on your PATH whenever the plugin is enabled, and adds a
+This puts `claudeswitch` on your PATH inside Claude Code, and adds a
 `/claudeswitch:switch-account` skill.
+
+### Then run this once
+
+```bash
+claudeswitch install-shim
+```
+
+**Why it's needed.** Claude Code only puts a plugin's `bin/` on PATH inside its
+own sessions — but switching accounts requires Claude Code to be **quit**. So
+without a shim the command disappears exactly when you need it:
+
+```bash
+# Claude Code quit, plain terminal:
+claudeswitch use work
+# zsh: command not found: claudeswitch
+```
+
+`install-shim` writes a small forwarder to `~/.local/bin/claudeswitch` that
+locates whatever plugin version is installed, so it survives plugin updates.
+Pass a different directory if you prefer (`claudeswitch install-shim ~/bin`). It
+prints a PATH line to add if that directory isn't already on your PATH.
+
+### Multiple config dirs
+
+Plugin registration is per `CLAUDE_CONFIG_DIR` and nothing propagates between
+them. If you use several config dirs, run the two `/plugin` commands in a session
+using each. The shim handles this itself — it checks `$CLAUDE_CONFIG_DIR` first,
+then falls back to `~/.claude`.
 
 ---
 
@@ -60,6 +88,7 @@ claudeswitch list            # who's parked, who's active
 claudeswitch whoami          # active account only
 claudeswitch save <name>     # re-park after a fresh /login
 claudeswitch rm <name>       # delete a parked slot
+claudeswitch install-shim    # make the command work outside Claude Code
 ```
 
 Or ask Claude: *"switch to my work account"*, *"which account am I on?"*
@@ -211,6 +240,12 @@ the real email per slot. Quit Claude Code, log in as the correct account, re-run
 **`(lookup failed — offline or token expired)`**
 `list` resolves emails via an API call. Offline, or that slot's refresh token
 expired. The stored credential holds no email itself.
+
+**`command not found: claudeswitch` in a plain terminal**
+Expected before running `claudeswitch install-shim`. A plugin's `bin/` is only on
+PATH inside Claude Code sessions. Run `install-shim` once from inside Claude Code,
+then the command works anywhere. If it still isn't found afterwards, the shim
+directory isn't on your PATH — `install-shim` prints the line to add.
 
 **Keychain permission prompts**
 macOS asking about the `security` command. Choose "Always Allow".

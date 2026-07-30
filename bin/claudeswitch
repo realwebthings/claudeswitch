@@ -7,6 +7,11 @@
 #   claudeswitch list            show parked slots and which is active
 #   claudeswitch whoami          show the active account
 #   claudeswitch rm <name>       delete a parked slot
+#   claudeswitch install-shim    make this command available outside Claude Code
+#
+# Run install-shim once after installing the plugin. Claude Code only puts a
+# plugin's bin/ on PATH inside its own sessions, but switching accounts requires
+# Claude Code to be quit — so the command must work in a plain terminal too.
 #
 # Why this is needed
 # ------------------
@@ -282,6 +287,53 @@ case "$cmd" in
     security delete-generic-password -s "${LIVE_SVC}-${name}" -a "$ACCT" >/dev/null
     rm -f "$PARK_DIR/$name.oauthAccount.json"
     echo "removed slot '$name' (the active credential is untouched)"
+    ;;
+
+  install-shim)
+    # Claude Code only puts a plugin's bin/ on PATH inside its own sessions.
+    # But `use` requires Claude Code to be QUIT, so the command has to work in a
+    # plain terminal too. This installs a tiny forwarder that locates whatever
+    # plugin version is currently installed, so it survives plugin updates.
+    target_dir="${1:-$HOME/.local/bin}"
+    mkdir -p "$target_dir"
+    shim="$target_dir/claudeswitch"
+
+    if [ -e "$shim" ] && ! grep -q 'claudeswitch-shim' "$shim" 2>/dev/null; then
+      die "$shim already exists and is not a claudeswitch shim — move it aside first"
+    fi
+
+    cat > "$shim" <<'SHIM'
+#!/bin/bash
+# claudeswitch-shim — forwards to the installed claudeswitch plugin.
+# A plugin's bin/ is only on PATH inside Claude Code sessions, but switching
+# accounts requires Claude Code to be quit. This makes the command available
+# in any shell. Regenerate with: claudeswitch install-shim
+# No `set -e` here: a failed lookup must fall through to the message below
+# rather than exiting silently.
+for root in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME/.claude"; do
+  # Newest version directory wins, so plugin updates need no reinstall.
+  real="$(ls -1d "$root"/plugins/cache/claudeswitch/claudeswitch/*/bin/claudeswitch 2>/dev/null | sort -V | tail -1)"
+  if [ -n "$real" ] && [ -x "$real" ]; then
+    exec "$real" "$@"
+  fi
+done
+echo "claudeswitch: plugin not found. Install it in Claude Code:" >&2
+echo "  /plugin marketplace add https://github.com/realwebthings/claudeswitch" >&2
+echo "  /plugin install claudeswitch" >&2
+exit 1
+SHIM
+    chmod +x "$shim"
+    echo "installed shim: $shim"
+
+    case ":$PATH:" in
+      *":$target_dir:"*) echo "$target_dir is already on your PATH — done." ;;
+      *)
+        echo
+        echo "$target_dir is NOT on your PATH. Add this to your shell profile:"
+        echo "  export PATH=\"$target_dir:\$PATH\""
+        echo "then reload it (e.g. source ~/.zshrc)."
+        ;;
+    esac
     ;;
 
   help|--help|-h)
