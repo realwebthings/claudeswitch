@@ -7,66 +7,75 @@ Switch between multiple Claude Code accounts on one Mac without re-running
 
 ---
 
-## Install
+## Quickstart
+
+Four steps. Details for each are below.
+
+```
+1. install the plugin        /plugin install (or claude plugin install)
+2. claudeswitch install-shim   makes the command work outside Claude Code
+3. /login + save, per account  one login per account, ever
+4. claudeswitch use <name>     switch, then restart Claude Code
+```
+
+**Stuck at any point?** Run `/claudeswitch:help` inside Claude Code. It reads
+your actual state and tells you the specific cause — faster than matching a
+symptom against this page.
+
+---
+
+## 1. Install
+
+Inside Claude Code:
 
 ```
 /plugin marketplace add https://github.com/realwebthings/claudeswitch
 /plugin install claudeswitch
 ```
 
-This puts `claudeswitch` on your PATH inside Claude Code, and adds a
-`/claudeswitch:switch-account` skill.
+**If `/plugin isn't available in this environment`** — some hosts, including the
+VSCode extension, don't expose it. Use a terminal instead:
 
-### Then run this once
+```bash
+claude plugin marketplace add https://github.com/realwebthings/claudeswitch
+claude plugin install claudeswitch@claudeswitch
+```
+
+The `@claudeswitch` suffix is the marketplace name. The CLI requires it; a bare
+name fails with `Plugin "claudeswitch" not found`.
+
+This adds the `claudeswitch` command plus two skills:
+`/claudeswitch:switch-account` and `/claudeswitch:help`.
+
+## 2. Install the shim
 
 ```bash
 claudeswitch install-shim
 ```
 
-**Why it's needed.** Claude Code only puts a plugin's `bin/` on PATH inside its
-own sessions — but switching accounts requires Claude Code to be **quit**. So
-without a shim the command disappears exactly when you need it:
+Run this once, from inside Claude Code. Without it the command vanishes exactly
+when you need it:
 
 ```bash
-# Claude Code quit, plain terminal:
+# Claude Code quit — which switching requires:
 claudeswitch use work
 # zsh: command not found: claudeswitch
 ```
 
-The plugin reminds you about this once, on your first session after installing.
-It does not create the shim for you: `~/.local/bin` is outside plugin-managed
-space, and a plugin shouldn't silently add executables to your PATH.
+A plugin's `bin/` is only on PATH inside Claude Code sessions, but `use` needs
+Claude Code **quit**. The shim is a small forwarder at
+`~/.local/bin/claudeswitch` that locates whatever plugin version is installed, so
+it survives updates. Pass a directory to put it elsewhere
+(`claudeswitch install-shim ~/bin`). It prints the PATH line to add if that
+directory isn't on your PATH.
 
-`install-shim` writes a small forwarder to `~/.local/bin/claudeswitch` that
-locates whatever plugin version is installed, so it survives plugin updates.
-Pass a different directory if you prefer (`claudeswitch install-shim ~/bin`). It
-prints a PATH line to add if that directory isn't already on your PATH.
-
-### Updating
-
-```
-/plugin marketplace update claudeswitch
-/plugin update claudeswitch
-```
-
-Then reload the window (or restart Claude Code) to apply. With the CLI installed,
-`claude plugin update claudeswitch@claudeswitch` does the same thing — note the
-`@marketplace` suffix is required there.
-
-The plugin never updates itself: that would let this repo push code onto your
-machine without you opting in. It only tells you when a session is still running
-an older version than what is installed.
-
-### Multiple config dirs
-
-Plugin registration is per `CLAUDE_CONFIG_DIR` and nothing propagates between
-them. If you use several config dirs, run the two `/plugin` commands in a session
-using each. The shim handles this itself — it checks `$CLAUDE_CONFIG_DIR` first,
-then falls back to `~/.claude`.
+The plugin reminds you about this once but won't create it for you:
+`~/.local/bin` is outside plugin-managed space, and a plugin shouldn't silently
+add executables to your PATH.
 
 ---
 
-## Setup — one `/login` per account, ever
+## 3. Set up each account — one `/login` per account, ever
 
 The `claude` CLI is **not** required — the extension or desktop app is fine.
 Only a terminal is needed, to run `claudeswitch` itself.
@@ -107,7 +116,7 @@ Slot names are arbitrary labels — use whatever you like.
 
 ---
 
-## Daily use
+## 4. Daily use
 
 ```bash
 claudeswitch use work        # switch, then restart Claude Code
@@ -127,6 +136,42 @@ symptom against this README.
 
 **Restart Claude Code after switching.** A running session has already read the
 credential. For the VSCode sidebar, reload the window.
+
+---
+
+## Updating
+
+Inside Claude Code:
+
+```
+/plugin marketplace update claudeswitch
+/plugin update claudeswitch
+```
+
+Or from a terminal, if `/plugin` isn't available in your host:
+
+```bash
+claude plugin marketplace update claudeswitch
+claude plugin update claudeswitch@claudeswitch
+```
+
+Then **reload the window** (or restart Claude Code) to apply. Until you do, the
+session keeps running the previously cached version — the plugin says so on
+startup when it detects this.
+
+Old version directories are left behind under
+`~/.claude/plugins/cache/claudeswitch/`. Harmless (the shim always picks the
+newest) but safe to delete.
+
+The plugin never updates itself. That would let this repo push code onto your
+machine without you opting in.
+
+### Multiple config dirs
+
+Plugin registration is per `CLAUDE_CONFIG_DIR` and nothing propagates between
+them. If you use several config dirs, install in a session using each one. The
+shim handles this itself — it checks `$CLAUDE_CONFIG_DIR` first, then falls back
+to `~/.claude`.
 
 ---
 
@@ -247,6 +292,19 @@ on a Pro/Team seat, and a key in a settings file is plaintext on disk.
 ---
 
 ## Troubleshooting
+
+**Fastest route: run `/claudeswitch:help` inside Claude Code.** It collects your
+real state — parked slots and their true emails, running sessions, missing
+identity files — and names the specific cause. The entries below are the same
+ground, if you'd rather read.
+
+**`/plugin isn't available in this environment`**
+Some hosts, including the VSCode extension, don't expose `/plugin`. Use the
+terminal form: `claude plugin install claudeswitch@claudeswitch` (the
+`@marketplace` suffix is required).
+
+**`Plugin "claudeswitch" not found` from the CLI**
+Bare names don't resolve. Use `claudeswitch@claudeswitch`.
 
 **`refusing to switch — other Claude Code sessions are running`**
 Expected. Quit them and retry. Listed PIDs exclude the session running the
