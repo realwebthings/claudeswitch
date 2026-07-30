@@ -1,11 +1,30 @@
 {
   "name": "claudeswitch",
   "description": "Switch between multiple Claude Code accounts without re-running /login. Parks each account's credentials in its own Keychain slot so logging in as one account no longer destroys the others. macOS only.",
-  "version": "1.1.0",
-  "keywords": ["accounts", "auth", "login", "productivity", "macos"],
+  "version": "1.2.0",
+  "keywords": [
+    "accounts",
+    "auth",
+    "login",
+    "productivity",
+    "macos"
+  ],
   "author": {
     "name": "Mukesh Kumar",
     "url": "https://github.com/realwebthings"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/check-shim.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
 }

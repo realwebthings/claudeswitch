@@ -33,6 +33,10 @@ claudeswitch use work
 # zsh: command not found: claudeswitch
 ```
 
+The plugin reminds you about this once, on your first session after installing.
+It does not create the shim for you: `~/.local/bin` is outside plugin-managed
+space, and a plugin shouldn't silently add executables to your PATH.
+
 `install-shim` writes a small forwarder to `~/.local/bin/claudeswitch` that
 locates whatever plugin version is installed, so it survives plugin updates.
 Pass a different directory if you prefer (`claudeswitch install-shim ~/bin`). It
