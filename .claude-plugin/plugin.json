@@ -1,0 +1,11 @@
+{
+  "name": "claudeswitch",
+  "description": "Switch between multiple Claude Code accounts without re-running /login. Parks each account's credentials in its own Keychain slot so logging in as one account no longer destroys the others. macOS only.",
+  "version": "1.0.0",
+  "keywords": ["accounts", "auth", "login", "productivity", "macos"],
+  "author": {
+    "name": "Mukesh Kumar",
+    "url": "https://github.com/mukeshsquare"
+  },
+  "license": "MIT"
+}

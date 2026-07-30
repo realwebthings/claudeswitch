@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claudeswitch",
+  "description": "Switch between multiple Claude Code accounts on one Mac without repeated logins.",
+  "owner": {
+    "name": "Mukesh Kumar",
+    "url": "https://github.com/mukeshsquare"
+  },
+  "plugins": [
+    {
+      "name": "claudeswitch",
+      "description": "Park each account's credentials in its own Keychain slot, then switch instantly. No repeated /login. macOS only.",
+      "source": "./",
+      "category": "productivity",
+      "keywords": ["accounts", "auth", "login", "macos"]
+    }
+  ]
+}
