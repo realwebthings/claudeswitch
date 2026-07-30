@@ -63,11 +63,17 @@ claudeswitch use work
 ```
 
 A plugin's `bin/` is only on PATH inside Claude Code sessions, but `use` needs
-Claude Code **quit**. The shim is a small forwarder at
-`~/.local/bin/claudeswitch` that locates whatever plugin version is installed, so
-it survives updates. Pass a directory to put it elsewhere
-(`claudeswitch install-shim ~/bin`). It prints the PATH line to add if that
-directory isn't on your PATH.
+Claude Code **quit**. The shim is a small forwarder that locates whatever plugin
+version is installed, so it survives updates.
+
+It picks a directory already on your PATH — `~/.local/bin`, `~/bin`, or
+`/usr/local/bin`, in that order — so a new terminal just works. If none of them
+is on your PATH it installs to `~/.local/bin` and offers to add the line to your
+shell profile. Pass a directory to override (`claudeswitch install-shim ~/bin`).
+
+**If the command is still not found**, the shell you're in predates the PATH
+change. Run `source ~/.zshrc`, or open a new terminal. `install-shim` detects
+this case and says so rather than adding a duplicate line.
 
 The plugin reminds you about this once but won't create it for you:
 `~/.local/bin` is outside plugin-managed space, and a plugin shouldn't silently
@@ -348,6 +354,11 @@ the real email per slot. Quit Claude Code, log in as the correct account, re-run
 **`(lookup failed — offline or token expired)`**
 `list` resolves emails via an API call. Offline, or that slot's refresh token
 expired. The stored credential holds no email itself.
+
+**`command not found: claudeswitch` even after install-shim**
+The shell you're in started before the PATH change. Run `source ~/.zshrc` or open
+a new terminal. Re-running `install-shim` will tell you which case you're in. The
+full path always works: `~/.local/bin/claudeswitch`.
 
 **`command not found: claudeswitch` in a plain terminal**
 Expected before running `claudeswitch install-shim`. A plugin's `bin/` is only on

@@ -43,7 +43,9 @@
 set -euo pipefail
 
 LIVE_SVC="Claude Code-credentials"
-ACCT="${USER}"
+# Keychain items are stored under the account name. $USER is not guaranteed to
+# be exported (cron, minimal shells), so fall back to asking the system.
+ACCT="${USER:-$(id -un)}"
 GLOBAL_JSON="${HOME}/.claude.json"
 PARK_DIR="${HOME}/.claude-accounts"
 PROFILE_URL="https://api.anthropic.com/api/oauth/profile"
@@ -298,7 +300,20 @@ case "$cmd" in
     # But `use` requires Claude Code to be QUIT, so the command has to work in a
     # plain terminal too. This installs a tiny forwarder that locates whatever
     # plugin version is currently installed, so it survives plugin updates.
-    target_dir="${1:-$HOME/.local/bin}"
+    # Prefer a directory the user's PATH already contains, so the command works
+    # in a new terminal with no profile edit and no reload. Only fall back to
+    # ~/.local/bin (creating it) when none of the usual spots is on PATH.
+    if [ -n "${1:-}" ]; then
+      target_dir="$1"
+    else
+      target_dir=""
+      for cand in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
+        case ":$PATH:" in
+          *":$cand:"*) [ -d "$cand" ] && [ -w "$cand" ] && { target_dir="$cand"; break; } ;;
+        esac
+      done
+      [ -n "$target_dir" ] || target_dir="$HOME/.local/bin"
+    fi
     mkdir -p "$target_dir"
     shim="$target_dir/claudeswitch"
 
@@ -330,12 +345,63 @@ SHIM
     echo "installed shim: $shim"
 
     case ":$PATH:" in
-      *":$target_dir:"*) echo "$target_dir is already on your PATH — done." ;;
+      *":$target_dir:"*)
+        echo "$target_dir is already on your PATH — done."
+        echo "Open a new terminal (or run 'hash -r') if the command isn't found yet."
+        ;;
       *)
+        path_line="export PATH=\"$target_dir:\$PATH\""
+        # Match the profile to the login shell rather than assuming zsh.
+        case "${SHELL:-}" in
+          */bash) profile="$HOME/.bash_profile" ;;
+          */fish) profile="" ;;   # fish syntax differs; don't guess
+          *)      profile="$HOME/.zshrc" ;;
+        esac
+
         echo
-        echo "$target_dir is NOT on your PATH. Add this to your shell profile:"
-        echo "  export PATH=\"$target_dir:\$PATH\""
-        echo "then reload it (e.g. source ~/.zshrc)."
+        echo "$target_dir is not on your PATH."
+
+        if [ -z "$profile" ]; then
+          echo "Add the equivalent of this to your shell config:"
+          echo "  $path_line"
+          exit 0
+        fi
+
+        # A profile usually writes $HOME/... rather than the expanded path, so
+        # check both spellings before offering to add a duplicate line.
+        target_tilde="\$HOME${target_dir#$HOME}"
+        if [ -f "$profile" ] && { grep -qF "$target_dir" "$profile" 2>/dev/null \
+             || grep -qF "$target_tilde" "$profile" 2>/dev/null; }; then
+          echo "$profile already adds it to PATH — this shell just hasn't reloaded."
+          echo "run: source $profile"
+          exit 0
+        fi
+
+        # Only offer when there's a terminal to answer on; in a non-interactive
+        # run (a hook, a script) just print what to do.
+        if [ ! -t 0 ]; then
+          echo "Add this to $profile, then reload it:"
+          echo "  $path_line"
+          exit 0
+        fi
+
+        printf 'Add it to %s now? [y/N] ' "$profile"
+        read -r reply
+        case "$reply" in
+          [yY]|[yY][eE][sS])
+            {
+              echo ""
+              echo "# added by claudeswitch install-shim"
+              echo "$path_line"
+            } >> "$profile"
+            echo "added to $profile"
+            echo "run: source $profile"
+            ;;
+          *)
+            echo "left alone. Add this yourself, then reload:"
+            echo "  $path_line"
+            ;;
+        esac
         ;;
     esac
     ;;
