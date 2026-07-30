@@ -80,19 +80,27 @@ add executables to your PATH.
 The `claude` CLI is **not** required — the extension or desktop app is fine.
 Only a terminal is needed, to run `claudeswitch` itself.
 
+**Two of these steps only you can do.** Logging in is a browser OAuth flow, and
+nothing can quit the session it is running inside. Claude can run the
+`claudeswitch` commands for you, but not steps 1 and 2.
+
 For each account:
 
-1. **Log in as it.** In Claude Code — VSCode/JetBrains extension, desktop app,
-   or the `claude` CLI, whichever you use — run `/login`.
-2. **Quit Claude Code completely**, including any extension sidebar. Verify:
+1. **Log in as it** — *you.* Run `/login` in Claude Code. If your host reports
+   `/login isn't available in this environment` (the VSCode extension does), use
+   its own account UI, or run `claude` in a terminal and `/login` there.
+2. **Quit Claude Code completely** — *you.* Include any extension sidebar.
+   Verify:
    ```bash
    pgrep -fl 'native-binary/claude|Claude\.app' # expect no output
    ```
    Orphans can be cleared with `pkill -f 'native-binary/claude'`.
-3. **Park it** from a terminal:
+3. **Park it** — *you or Claude.* From a terminal:
    ```bash
    claudeswitch save work
    ```
+   `save` prints which account it actually parked. Check that line matches what
+   you intended before moving on.
 
 Repeat for the next account, then check both:
 
@@ -297,6 +305,16 @@ on a Pro/Team seat, and a key in a settings file is plaintext on disk.
 real state — parked slots and their true emails, running sessions, missing
 identity files — and names the specific cause. The entries below are the same
 ground, if you'd rather read.
+
+**`/login isn't available in this environment`**
+Same host limitation as `/plugin`. Use the extension's own account UI, or run
+`claude` in a terminal and `/login` there.
+
+**Can Claude do the switching for me?**
+Partly. `list`, `whoami`, and `save` are ordinary commands it can run. `/login`
+is a browser flow only you can complete, and `use` has to run with Claude Code
+quit — so it cannot be run from inside a session. Ask Claude for those two and it
+will tell you the same thing.
 
 **`/plugin isn't available in this environment`**
 Some hosts, including the VSCode extension, don't expose `/plugin`. Use the
