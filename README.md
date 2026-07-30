@@ -42,6 +42,21 @@ locates whatever plugin version is installed, so it survives plugin updates.
 Pass a different directory if you prefer (`claudeswitch install-shim ~/bin`). It
 prints a PATH line to add if that directory isn't already on your PATH.
 
+### Updating
+
+```
+/plugin marketplace update claudeswitch
+/plugin update claudeswitch
+```
+
+Then reload the window (or restart Claude Code) to apply. With the CLI installed,
+`claude plugin update claudeswitch@claudeswitch` does the same thing — note the
+`@marketplace` suffix is required there.
+
+The plugin never updates itself: that would let this repo push code onto your
+machine without you opting in. It only tells you when a session is still running
+an older version than what is installed.
+
 ### Multiple config dirs
 
 Plugin registration is per `CLAUDE_CONFIG_DIR` and nothing propagates between
@@ -53,18 +68,26 @@ then falls back to `~/.claude`.
 
 ## Setup — one `/login` per account, ever
 
-Do this once per account. Claude Code must be **fully quit** each time,
-including the VSCode extension sidebar:
+The `claude` CLI is **not** required — the extension or desktop app is fine.
+Only a terminal is needed, to run `claudeswitch` itself.
+
+For each account:
+
+1. **Log in as it.** In Claude Code — VSCode/JetBrains extension, desktop app,
+   or the `claude` CLI, whichever you use — run `/login`.
+2. **Quit Claude Code completely**, including any extension sidebar. Verify:
+   ```bash
+   pgrep -fl 'native-binary/claude|Claude\.app' # expect no output
+   ```
+   Orphans can be cleared with `pkill -f 'native-binary/claude'`.
+3. **Park it** from a terminal:
+   ```bash
+   claudeswitch save work
+   ```
+
+Repeat for the next account, then check both:
 
 ```bash
-pgrep -fl 'native-binary/claude'    # expect no output
-
-claude                              # /login as the first account, then quit
-claudeswitch save work
-
-claude                              # /login as the second account, then quit
-claudeswitch save personal
-
 claudeswitch list
 ```
 

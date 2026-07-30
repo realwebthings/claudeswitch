@@ -70,7 +70,11 @@ running_session_pids() {
     mine="$mine $p"
     p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
   done
-  for p in $(pgrep -f 'native-binary/claude|/claude$' 2>/dev/null || true); do
+  # Covers the VSCode/JetBrains extension (native-binary/claude), a CLI install
+  # on PATH (/claude), and the desktop app (Claude.app). Anything that holds the
+  # credential open needs to be caught here, whichever way Claude Code was
+  # installed — the CLI is not required for this tool to work.
+  for p in $(pgrep -f 'native-binary/claude|/claude$|Claude\.app' 2>/dev/null || true); do
     case " $mine " in *" $p "*) continue ;; esac
     pids="$pids $p"
   done
@@ -101,7 +105,7 @@ assert_safe_to_switch() {
 
 read_live() {
   security find-generic-password -s "$LIVE_SVC" -a "$ACCT" -w 2>/dev/null \
-    || die "no active credential found — run 'claude' and /login first"
+    || die "no active credential found — open Claude Code and run /login first"
 }
 
 write_slot() {
