@@ -10,7 +10,7 @@ Switch between multiple Claude Code accounts on one Mac without re-running
 ## Install
 
 ```
-/plugin marketplace add https://github.com/mukeshsquare/claudeswitch
+/plugin marketplace add https://github.com/realwebthings/claudeswitch
 /plugin install claudeswitch
 ```
 
