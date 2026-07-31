@@ -1,16 +1,18 @@
 #!/bin/bash
-# SessionStart hook — remind the user to install the shim, once.
+# SessionStart hook — make sure the shim exists, and report account risks.
 #
 # A plugin's bin/ is only on PATH inside Claude Code sessions, but
 # `claudeswitch use` requires Claude Code to be QUIT. Without a shim on the
-# user's own PATH, the command is unavailable exactly when it is needed.
+# user's own PATH, the command is unavailable exactly when it is needed — so the
+# shim is installed automatically where that is unambiguously safe (see the
+# auto-install section below for what "safe" means and why the line is drawn
+# there).
 #
-# This only *detects* and *reports*. It deliberately does not write to
-# ~/.local/bin: that is outside plugin-managed space, and silently adding an
-# executable to a user's PATH is not something a plugin should do unasked.
+# Everything else here only *detects* and *reports*: it never edits a shell
+# profile, never creates a directory, and never parks a credential unless the user
+# has opted in.
 #
-# Stays quiet when the shim already exists, or once the user has been told and
-# chosen not to install it.
+# Stays quiet when there is nothing to do.
 
 set -uo pipefail
 
@@ -95,9 +97,56 @@ if command -v claudeswitch >/dev/null 2>&1; then
   esac
 fi
 
-# Only nag once. The user may have read the notice and declined.
-[ -f "$NOTIFIED" ] && exit 0
+# ------------------------------------------------------- shim auto-install ----
+# The shim is needed for the tool to work at all: `use` requires Claude Code to be
+# quit, but a plugin's bin/ is only on PATH inside a session. So install it
+# automatically — but only where that is unambiguously safe.
+#
+# Safe means: a directory that ALREADY exists and is ALREADY on PATH. Then the
+# shim works in the next terminal with no directory created, no shell profile
+# edited, and no reload needed.
+#
+# Anything else (would need mkdir, or a PATH change) is left to the user, because
+# creating directories and editing shell config on their behalf is not a plugin's
+# call — and a profile edit would not take effect until reload anyway.
+#
+# Opt out entirely:
+#   touch "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/claudeswitch/no-autoshim
 
+if [ -f "$STATE_DIR/no-autoshim" ]; then
+  exit 0
+fi
+
+# Pick a directory that needs no setup at all. Order mirrors install-shim.
+autoshim_dir=""
+for cand in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
+  case ":$PATH:" in
+    *":$cand:"*)
+      [ -d "$cand" ] && [ -w "$cand" ] && { autoshim_dir="$cand"; break; } ;;
+  esac
+done
+
+if [ -n "$autoshim_dir" ]; then
+  # Never clobber a file we did not write. install-shim enforces this too, but
+  # check here so the failure is a quiet skip rather than a session-start error.
+  if [ -e "$autoshim_dir/claudeswitch" ] \
+     && ! grep -q 'claudeswitch-shim' "$autoshim_dir/claudeswitch" 2>/dev/null; then
+    exit 0
+  fi
+  # Delegate to install-shim rather than duplicating the shim body: one source of
+  # truth for what a shim contains. Non-interactive, so it never prompts.
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -x "$CLAUDE_PLUGIN_ROOT/bin/claudeswitch" ] \
+     && "$CLAUDE_PLUGIN_ROOT/bin/claudeswitch" install-shim "$autoshim_dir" </dev/null >/dev/null 2>&1
+  then
+    echo "claudeswitch: installed the shim to $autoshim_dir/claudeswitch — the command now works in any terminal."
+    echo "  (needed because switching accounts requires Claude Code to be quit.)"
+    exit 0
+  fi
+  # Fall through to the notice if that failed for any reason.
+fi
+
+# Could not auto-install safely: tell the user once and let them decide.
+[ -f "$NOTIFIED" ] && exit 0
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 : > "$NOTIFIED" 2>/dev/null || true
 

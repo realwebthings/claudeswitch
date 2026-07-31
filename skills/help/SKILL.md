@@ -46,11 +46,21 @@ overwritten. It is a real account worth renaming via `save <name>`, not junk.
 
 ### "command not found: claudeswitch"
 
-Only in a plain terminal, and expected before setup: a plugin's `bin/` is on PATH
-only inside Claude Code sessions. Fix: run `claudeswitch install-shim` from
-inside Claude Code, once. If it persists afterwards, the shim directory
-(`~/.local/bin` by default) is not on their PATH — `install-shim` prints the
-exact line to add.
+Only in a plain terminal: a plugin's `bin/` is on PATH only inside Claude Code
+sessions.
+
+The plugin normally installs the shim automatically on session start, but only into
+a directory that already exists and is already on PATH. So this means either the
+shim was never installed (no such directory), or it was installed somewhere not yet
+on this shell's PATH.
+
+Fix: `claudeswitch install-shim` from inside Claude Code — that version creates
+`~/.local/bin` and offers to add it to the shell profile. If it was already
+installed, the shell simply predates the PATH change: `source ~/.zshrc` or a new
+terminal. `~/.local/bin/claudeswitch` always works as a full path.
+
+Auto-install is skipped entirely if `no-autoshim` exists in the state dir, or if a
+non-claudeswitch file already occupies the target path.
 
 ### "refusing to switch — other Claude Code sessions are running"
 

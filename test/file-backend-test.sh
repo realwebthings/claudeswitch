@@ -508,6 +508,100 @@ check "unknown shell picks .profile" ".profile" "$out"
 echo
 
 echo "=============================================="
+echo " 9b. hook auto-installs the shim only when safe"
+echo "=============================================="
+# The shim is required for the tool to function (`use` needs Claude Code quit, but
+# a plugin's bin/ is only on PATH inside a session), so the hook installs it
+# automatically — but ONLY into a directory that already exists and is already on
+# PATH. It must never create a directory or edit a shell profile unasked.
+#
+# Earlier sections leave shims from their own sandboxes on PATH, and the hook
+# correctly exits early when it can already resolve `claudeswitch` — so these
+# cases need a PATH with no claudeswitch on it at all.
+saved_path="$PATH"
+clean_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# For the "no safe target" cases, PATH must contain none of install-shim's
+# candidate dirs (~/.local/bin, ~/bin, /usr/local/bin). Tests run as root in a
+# container, where /usr/local/bin IS writable — a real user would not have that.
+nosafe_path="/usr/sbin:/usr/bin:/sbin:/bin"
+# Section 9 ran install-shim with an explicit target, and one of the candidate
+# directories (/usr/local/bin) is a real system dir that survives newhome — it
+# lives outside $HOME. A leftover shim there makes the hook correctly exit early,
+# so clear it before testing the auto-install paths.
+rm -f /usr/local/bin/claudeswitch "$HOME/bin/claudeswitch" 2>/dev/null || true
+
+# A) already exists + already on PATH -> auto-install, no profile written
+newhome 9d
+export CLAUDE_PLUGIN_ROOT="$REPO"
+mkdir -p "$HOME/.local/bin"
+export PATH="$HOME/.local/bin:$clean_path"
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
+check "auto-installs when dir exists and is on PATH" "installed the shim to" "$out"
+[ -x "$HOME/.local/bin/claudeswitch" ] && ok "shim written and executable" \
+  || bad "shim written and executable" "executable" "missing"
+[ -f "$HOME/.bashrc" ] || [ -f "$HOME/.zshrc" ] || [ -f "$HOME/.profile" ] \
+  && bad "no shell profile written" "none" "a profile exists" \
+  || ok "no shell profile written"
+bash -n "$HOME/.local/bin/claudeswitch" && ok "auto-installed shim is valid bash" \
+  || bad "auto-installed shim is valid bash" "valid" "invalid"
+# Second session must be silent — the shim now resolves on PATH.
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
+checkeq "silent on the next session" "" "$out"
+
+# B) target dir does NOT exist -> must not create it; falls back to the notice
+newhome 9e
+export CLAUDE_PLUGIN_ROOT="$REPO"
+export PATH="$nosafe_path"
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
+check "prints the manual notice when no safe dir exists" "install-shim" "$out"
+[ -d "$HOME/.local/bin" ] && bad "does not create ~/.local/bin" "absent" "created" \
+  || ok "does not create ~/.local/bin"
+
+# C) dir exists but is NOT on PATH -> must not install silently
+newhome 9f
+export CLAUDE_PLUGIN_ROOT="$REPO"
+mkdir -p "$HOME/.local/bin"
+export PATH="$nosafe_path"
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
+[ -e "$HOME/.local/bin/claudeswitch" ] \
+  && bad "no silent install into an off-PATH dir" "no shim" "shim written" \
+  || ok "no silent install into an off-PATH dir"
+
+# D) a foreign file at the target must never be clobbered
+newhome 9g
+export CLAUDE_PLUGIN_ROOT="$REPO"
+mkdir -p "$HOME/.local/bin"
+export PATH="$HOME/.local/bin:$clean_path"
+printf '#!/bin/sh\necho not-ours\n' > "$HOME/.local/bin/claudeswitch"
+chmod +x "$HOME/.local/bin/claudeswitch"
+bash "$REPO/hooks/check-shim.sh" >/dev/null 2>&1
+grep -q 'not-ours' "$HOME/.local/bin/claudeswitch" \
+  && ok "foreign file at target left untouched" \
+  || bad "foreign file at target left untouched" "not-ours intact" "overwritten"
+
+# E) opt-out flag
+newhome 9h
+export CLAUDE_PLUGIN_ROOT="$REPO"
+mkdir -p "$HOME/.local/bin" "$CLAUDE_CONFIG_DIR/claudeswitch"
+touch "$CLAUDE_CONFIG_DIR/claudeswitch/no-autoshim"
+export PATH="$HOME/.local/bin:$clean_path"
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
+[ -e "$HOME/.local/bin/claudeswitch" ] \
+  && bad "no-autoshim flag prevents install" "no shim" "shim written" \
+  || ok "no-autoshim flag prevents install"
+checkeq "  ...and stays silent" "" "$out"
+
+# F) must never break a session, even with no plugin root
+newhome 9i
+unset CLAUDE_PLUGIN_ROOT
+mkdir -p "$HOME/.local/bin"
+export PATH="$HOME/.local/bin:$clean_path"
+bash "$REPO/hooks/check-shim.sh" >/dev/null 2>&1
+checkeq "hook exits 0 with CLAUDE_PLUGIN_ROOT unset" "0" "$?"
+export PATH="$saved_path"
+echo
+
+echo "=============================================="
 echo " 10. SessionStart hook"
 echo "=============================================="
 newhome 10

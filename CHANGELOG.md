@@ -10,6 +10,22 @@ the window.
 
 ## 1.8.0 — unreleased
 
+### Added
+
+- **The shim now installs itself** on the first session, so `claudeswitch` works in
+  a plain terminal without a manual step. This only happens where it is
+  unambiguously safe: a directory that already exists and is already on `PATH`
+  (`~/.local/bin`, `~/bin`, `/usr/local/bin`). Nothing is created, no shell profile
+  is edited, and a file that isn't already a claudeswitch shim is never
+  overwritten.
+
+  If no such directory exists, the previous notice is printed and you run
+  `claudeswitch install-shim` yourself — that path still creates `~/.local/bin` and
+  asks before editing a profile, because a silent profile edit is hard to undo and
+  wouldn't take effect until reload anyway.
+
+  Opt out with `touch ~/.claude/claudeswitch/no-autoshim`.
+
 ### Fixed
 
 - **Path traversal in `rm`.** Slot-name validation ran only on `save`, so

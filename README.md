@@ -42,7 +42,7 @@ Four steps. Details for each are below.
 
 ```
 1. install the plugin        /plugin install (or claude plugin install)
-2. claudeswitch install-shim   makes the command work outside Claude Code
+2. (shim installs itself)    usually automatic — step 2 tells you if not
 3. save, THEN /login, per account   one login per account, ever
 4. claudeswitch use <name>     switch, then restart Claude Code
 ```
@@ -82,12 +82,22 @@ This adds the `claudeswitch` command plus two skills:
 
 ## 2. Install the shim
 
-```bash
-claudeswitch install-shim
+**Usually automatic — you can skip this step.** On the first session after
+installing, the plugin installs the shim itself if it can do so safely, and tells
+you:
+
+```
+claudeswitch: installed the shim to ~/.local/bin/claudeswitch — the command now
+works in any terminal.
 ```
 
-Run this once, from inside Claude Code. Without it the command vanishes exactly
-when you need it:
+If you see that, move on to step 3.
+
+### Why a shim is needed at all
+
+A plugin's `bin/` is only on PATH inside Claude Code sessions, but `use` needs
+Claude Code **quit** — so without a shim the command vanishes exactly when you
+need it:
 
 ```bash
 # Claude Code quit — which switching requires:
@@ -95,22 +105,37 @@ claudeswitch use work
 # zsh: command not found: claudeswitch
 ```
 
-A plugin's `bin/` is only on PATH inside Claude Code sessions, but `use` needs
-Claude Code **quit**. The shim is a small forwarder that locates whatever plugin
-version is installed, so it survives updates.
+The shim is a small forwarder that locates whatever plugin version is installed,
+so it survives updates.
 
-It picks a directory already on your PATH — `~/.local/bin`, `~/bin`, or
-`/usr/local/bin`, in that order — so a new terminal just works. If none of them
-is on your PATH it installs to `~/.local/bin` and offers to add the line to your
-shell profile. Pass a directory to override (`claudeswitch install-shim ~/bin`).
+### When it isn't automatic
+
+Auto-install only happens where it is unambiguously safe: a directory that
+**already exists** and is **already on your PATH** (`~/.local/bin`, `~/bin`, or
+`/usr/local/bin`, in that order). Then a new terminal just works — nothing is
+created and no shell config is touched.
+
+If no such directory exists, the plugin says so instead of guessing, and you run it
+yourself:
+
+```bash
+claudeswitch install-shim
+```
+
+That version will create `~/.local/bin` and offer to add it to your shell profile.
+Pass a directory to override: `claudeswitch install-shim ~/bin`.
+
+It will never overwrite a file that isn't already a claudeswitch shim.
 
 **If the command is still not found**, the shell you're in predates the PATH
-change. Run `source ~/.zshrc`, or open a new terminal. `install-shim` detects
-this case and says so rather than adding a duplicate line.
+change. Run `source ~/.zshrc`, or open a new terminal. `install-shim` detects this
+case and says so rather than adding a duplicate line.
 
-The plugin reminds you about this once but won't create it for you:
-`~/.local/bin` is outside plugin-managed space, and a plugin shouldn't silently
-add executables to your PATH.
+**To opt out of auto-install** (and only ever install it yourself):
+
+```bash
+mkdir -p ~/.claude/claudeswitch && touch ~/.claude/claudeswitch/no-autoshim
+```
 
 ---
 
