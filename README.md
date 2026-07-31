@@ -19,11 +19,6 @@ claudeswitch use work         # switch — no /login, no browser
 One `/login` per account, ever. `claudeswitch list` shows who's parked and who's
 active, with real emails resolved from the API — not just the labels you chose.
 
-<!-- DEMO: replace with the recording once made — see docs/DEMO.md for the script.
-     Keep it above the fold; it is the highest-conversion thing on this page.
-![claudeswitch demo](docs/demo.gif)
--->
-
 Stuck? `/claudeswitch:help` inside Claude Code reads your actual state — parked
 slots, their true emails, running sessions, missing files — and names the specific
 cause instead of making you match symptoms against a page.
