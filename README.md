@@ -1,26 +1,43 @@
 # claudeswitch
 
-Switch between multiple Claude Code accounts on one machine without re-running
-`/login` every time.
+**Two Claude accounts, one machine. `/login` keeps logging you out of the other
+one.**
 
-Requires `python3` and `curl`.
+Work account for work, personal account for side projects — but Claude Code stores
+exactly one credential. Signing into the second account destroys the first, so
+switching means a full browser OAuth flow every time.
 
-| Platform | Status | Credentials are stored in |
-| --- | --- | --- |
-| macOS | Supported, tested | login Keychain, via `security` |
-| Linux | Supported, tested | `~/.claude/.credentials.json` (mode 600) |
-| Windows + WSL | Supported — use the Linux path inside your WSL distro | same as Linux |
-| Windows native | Best-effort, **not verified** | see below |
+claudeswitch parks each account in its own slot, so switching is one command:
 
-**Windows native:** claudeswitch needs a bash (Git Bash / MSYS) and a Claude Code
-install that keeps its token in `.credentials.json` under your user profile. If
-your install uses Windows Credential Manager instead, claudeswitch will tell you
-so rather than pretend to switch — running Claude Code under WSL is the reliable
-option today. Reports from real Windows setups are welcome in
-[issues](https://github.com/realwebthings/claudeswitch/issues).
+```bash
+claudeswitch save work        # park the account you're signed into (once)
+claudeswitch save personal    # park the other one (once)
 
-The storage backend is detected automatically; override it with
-`CLAUDESWITCH_BACKEND=keychain|file` if you need to.
+claudeswitch use work         # switch — no /login, no browser
+```
+
+One `/login` per account, ever. `claudeswitch list` shows who's parked and who's
+active, with real emails resolved from the API — not just the labels you chose.
+
+<!-- DEMO: replace with the recording once made — see docs/DEMO.md for the script.
+     Keep it above the fold; it is the highest-conversion thing on this page.
+![claudeswitch demo](docs/demo.gif)
+-->
+
+Stuck? `/claudeswitch:help` inside Claude Code reads your actual state — parked
+slots, their true emails, running sessions, missing files — and names the specific
+cause instead of making you match symptoms against a page.
+
+> **Restart Claude Code after switching.** A running session holds the old
+> credential. That's also why `claudeswitch use` refuses while a session is alive
+> rather than letting it silently revert your switch.
+
+**Platforms:** macOS and Linux/WSL are supported and tested (112 automated checks
+across Debian, Ubuntu, Alpine and Fedora on every push). Windows-native is
+best-effort and unverified — use WSL. [Details below](#platform-support).
+
+**Requires** `python3` and `curl`. **Handles OAuth tokens** — see
+[SECURITY.md](SECURITY.md) for exactly what is stored where.
 
 ---
 
@@ -176,6 +193,27 @@ symptom against this README.
 
 **Restart Claude Code after switching.** A running session has already read the
 credential. For the VSCode sidebar, reload the window.
+
+---
+
+## Platform support
+
+| Platform | Status | Credentials are stored in |
+| --- | --- | --- |
+| macOS | Supported, tested | login Keychain, via `security` |
+| Linux | Supported, tested | `~/.claude/.credentials.json` (mode 600) |
+| Windows + WSL | Supported — use the Linux path inside your WSL distro | same as Linux |
+| Windows native | Best-effort, **not verified** | see below |
+
+The storage backend is detected automatically; override it with
+`CLAUDESWITCH_BACKEND=keychain|file` if you need to.
+
+**Windows native:** claudeswitch needs a bash (Git Bash / MSYS) and a Claude Code
+install that keeps its token in `.credentials.json` under your user profile. If
+your install uses Windows Credential Manager instead, claudeswitch will tell you
+so rather than pretend to switch — running Claude Code under WSL is the reliable
+option today. Reports from real Windows setups are welcome in
+[issues](https://github.com/realwebthings/claudeswitch/issues).
 
 ---
 
