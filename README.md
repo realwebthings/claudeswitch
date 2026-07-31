@@ -36,110 +36,46 @@ best-effort and unverified — use WSL. [Details below](#platform-support).
 
 ---
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash
+```
+
+That's it. The script puts `claudeswitch` in `~/.local/bin` (or wherever is
+already on your PATH) and offers to update your shell profile if needed.
+
+**Specific version:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash -s -- --version v1.8.0
+```
+
+**Manual download** — grab `bin/claudeswitch` from any
+[release](https://github.com/realwebthings/claudeswitch/releases), put it
+anywhere on your PATH, and `chmod +x` it.
+
+> **Claude Code plugin** — if you prefer the plugin route (adds
+> `/claudeswitch:help` and `/claudeswitch:switch-account` skills inside Claude
+> Code), see [Plugin install](#plugin-install) below. The direct install above
+> gives you the same `claudeswitch` command without the plugin machinery.
+
+---
+
 ## Quickstart
 
-Four steps. Details for each are below.
-
 ```
-1. install the plugin        /plugin install (or claude plugin install)
-2. (shim installs itself)    usually automatic — step 2 tells you if not
-3. save, THEN /login, per account   one login per account, ever
-4. claudeswitch use <name>     switch, then restart Claude Code
+1. install (above)
+2. save, THEN /login, per account   one login per account, ever
+3. claudeswitch use <name>          switch, then restart Claude Code
 ```
 
-**Order matters in step 3:** `save` the account you're on *before* running
+**Order matters in step 2:** `save` the account you're on *before* running
 `/login`, because `/login` overwrites the live credential. Park first and nothing
 is ever lost.
 
-**Stuck at any point?** Run `/claudeswitch:help` inside Claude Code. It reads
-your actual state and tells you the specific cause — faster than matching a
-symptom against this page.
-
 ---
 
-## 1. Install
-
-Inside Claude Code:
-
-```
-/plugin marketplace add https://github.com/realwebthings/claudeswitch
-/plugin install claudeswitch
-```
-
-**If `/plugin isn't available in this environment`** — some hosts, including the
-VSCode extension, don't expose it. Use a terminal instead:
-
-```bash
-claude plugin marketplace add https://github.com/realwebthings/claudeswitch
-claude plugin install claudeswitch@claudeswitch
-```
-
-The `@claudeswitch` suffix is the marketplace name. The CLI requires it; a bare
-name fails with `Plugin "claudeswitch" not found`.
-
-This adds the `claudeswitch` command plus two skills:
-`/claudeswitch:switch-account` and `/claudeswitch:help`.
-
-## 2. Install the shim
-
-**Usually automatic — you can skip this step.** On the first session after
-installing, the plugin installs the shim itself if it can do so safely, and tells
-you:
-
-```
-claudeswitch: installed the shim to ~/.local/bin/claudeswitch — the command now
-works in any terminal.
-```
-
-If you see that, move on to step 3.
-
-### Why a shim is needed at all
-
-A plugin's `bin/` is only on PATH inside Claude Code sessions, but `use` needs
-Claude Code **quit** — so without a shim the command vanishes exactly when you
-need it:
-
-```bash
-# Claude Code quit — which switching requires:
-claudeswitch use work
-# zsh: command not found: claudeswitch
-```
-
-The shim is a small forwarder that locates whatever plugin version is installed,
-so it survives updates.
-
-### When it isn't automatic
-
-Auto-install only happens where it is unambiguously safe: a directory that
-**already exists** and is **already on your PATH** (`~/.local/bin`, `~/bin`, or
-`/usr/local/bin`, in that order). Then a new terminal just works — nothing is
-created and no shell config is touched.
-
-If no such directory exists, the plugin says so instead of guessing, and you run it
-yourself:
-
-```bash
-claudeswitch install-shim
-```
-
-That version will create `~/.local/bin` and offer to add it to your shell profile.
-Pass a directory to override: `claudeswitch install-shim ~/bin`.
-
-It will never overwrite a file that isn't already a claudeswitch shim.
-
-**If the command is still not found**, the shell you're in predates the PATH
-change. Run `source ~/.zshrc`, or open a new terminal. `install-shim` detects this
-case and says so rather than adding a duplicate line.
-
-**To opt out of auto-install** (and only ever install it yourself):
-
-```bash
-mkdir -p ~/.claude/claudeswitch && touch ~/.claude/claudeswitch/no-autoshim
-```
-
----
-
-## 3. Set up each account — one `/login` per account, ever
+## Set up each account — one `/login` per account, ever
 
 The `claude` CLI is **not** required — the extension or desktop app is fine.
 Only a terminal is needed, to run `claudeswitch` itself.
@@ -193,7 +129,32 @@ Slot names are arbitrary labels — use whatever you like.
 
 ---
 
-## 4. Daily use
+## Plugin install
+
+The plugin adds `/claudeswitch:help` and `/claudeswitch:switch-account` skills
+inside Claude Code sessions. It is optional — the `claudeswitch` command works
+identically without it.
+
+Inside Claude Code (where `/plugin` is available):
+
+```
+/plugin marketplace add https://github.com/realwebthings/claudeswitch
+/plugin install claudeswitch
+```
+
+From a terminal (VSCode extension, or any host where `/plugin` isn't exposed):
+
+```bash
+claude plugin marketplace add https://github.com/realwebthings/claudeswitch
+claude plugin install claudeswitch@claudeswitch
+```
+
+The `@claudeswitch` suffix is required by the CLI; a bare name fails with
+`Plugin "claudeswitch" not found`.
+
+---
+
+## Daily use
 
 ```bash
 claudeswitch use work        # switch, then restart Claude Code
