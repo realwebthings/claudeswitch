@@ -14,20 +14,25 @@ case "${VERSION:-}" in --version) VERSION="${2:-}" ;; esac
 
 die() { echo "install: $*" >&2; exit 1; }
 
-# Resolve version
+# Resolve version — try releases API first, fall back to main branch
 if [ -z "$VERSION" ]; then
   VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"])' 2>/dev/null)" \
-    || die "could not fetch latest release — check your internet connection"
+    | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"])' 2>/dev/null || true)"
 fi
 
-echo "Installing claudeswitch $VERSION to $INSTALL_DIR ..."
+echo "Installing claudeswitch ${VERSION:-latest} to $INSTALL_DIR ..."
 
 mkdir -p "$INSTALL_DIR"
 
-# Download the script directly from the release tag
-curl -fsSL "https://raw.githubusercontent.com/$REPO/$VERSION/bin/claudeswitch" \
-  -o "$INSTALL_DIR/claudeswitch"
+# Download: use release tag if we have one, otherwise main branch
+if [ -n "$VERSION" ]; then
+  URL="https://raw.githubusercontent.com/$REPO/$VERSION/bin/claudeswitch"
+else
+  URL="https://raw.githubusercontent.com/$REPO/main/bin/claudeswitch"
+fi
+
+curl -fsSL "$URL" -o "$INSTALL_DIR/claudeswitch" \
+  || die "download failed from $URL"
 chmod +x "$INSTALL_DIR/claudeswitch"
 
 echo "Installed: $INSTALL_DIR/claudeswitch"

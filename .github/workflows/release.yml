@@ -31,23 +31,26 @@ jobs:
         if: steps.tag_check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          VERSION="${{ steps.ver.outputs.version }}"
+          cat > /tmp/notes.md << 'EOF'
+          See [CHANGELOG.md](https://github.com/realwebthings/claudeswitch/blob/main/CHANGELOG.md) for what changed.
+
+          ## Install
+
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash
+          ```
+
+          Specific version:
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash -s -- --version $VERSION
+          ```
+          EOF
           git tag "$VERSION"
           git push origin "$VERSION"
           gh release create "$VERSION" \
             --title "claudeswitch $VERSION" \
-            --notes "See [CHANGELOG.md](https://github.com/realwebthings/claudeswitch/blob/main/CHANGELOG.md) for what changed.
-
-## Install
-
-\`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash
-\`\`\`
-
-Or a specific version:
-\`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash -s -- --version $VERSION
-\`\`\`" \
+            --notes-file /tmp/notes.md \
             bin/claudeswitch \
             install.sh
