@@ -6,7 +6,10 @@
 
 set -uo pipefail
 
-CS=/repo/bin/claudeswitch
+# REPO defaults to the read-only mount used by run-docker.sh; CI sets it to the
+# checkout path instead.
+REPO="${REPO:-/repo}"
+CS="$REPO/bin/claudeswitch"
 PASS=0; FAIL=0
 
 ok()   { PASS=$((PASS+1)); echo "  PASS  $1"; }
@@ -285,7 +288,7 @@ out="$("$CS" internal-unparked 2>&1)"; rc=$?
 checkeq "internal-unparked quiet with no credential" "" "$out"
 checkeq "  ...and exits 0" "0" "$rc"
 # The hook must never block a session, even with a broken environment.
-out="$(bash /repo/hooks/check-shim.sh 2>&1)"; rc=$?
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"; rc=$?
 checkeq "hook exits 0 even with no credential" "0" "$rc"
 
 # With emails resolvable, the hook must actually WARN about an unparked account
@@ -308,14 +311,14 @@ mkalias() { # mk with an email matching the token, so identify() and json agree
   printf '{"oauthAccount":{"emailAddress":"%s@example.com"}}' "$1" > "$HOME/.claude.json"
 }
 export PATH="/mockbin:$PATH"
-export CLAUDE_PLUGIN_ROOT=/repo CLAUDESWITCH_FORCE=1
+export CLAUDE_PLUGIN_ROOT="$REPO" CLAUDESWITCH_FORCE=1
 mkalias alice; "$CS" save alice >/dev/null 2>&1
 mkalias bob   # bob is now live and unparked
 
 out="$("$CS" internal-unparked 2>&1)"
 checkeq "internal-unparked names the unparked account" "bob@example.com" "$out"
 
-out="$(bash /repo/hooks/check-shim.sh 2>&1)"
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
 check "hook warns about the unparked account" "not parked in any slot" "$out"
 check "  ...and names it" "bob@example.com" "$out"
 check "  ...and explains the opt-in" "autopark" "$out"
@@ -325,7 +328,7 @@ check "  ...and explains the opt-in" "autopark" "$out"
 
 # Opt in, then the hook should park it silently.
 mkdir -p "$CLAUDE_CONFIG_DIR/claudeswitch" && echo 1 > "$CLAUDE_CONFIG_DIR/claudeswitch/autopark"
-out="$(bash /repo/hooks/check-shim.sh 2>&1)"
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
 check "autopark mode parks the account" "parked the active account as 'bob'" "$out"
 [ -f "$HOME/.claude-accounts/bob.credentials.json" ] \
   && ok "autopark created a slot named from the email" \
@@ -334,7 +337,7 @@ checkeq "autoparked slot holds the right token" "bob" \
   "$(python3 -c "import json;print(json.load(open('$HOME/.claude-accounts/bob.credentials.json'))['claudeAiOauth']['accessToken'])")"
 
 # Now that bob is parked, the check must go quiet.
-out="$(bash /repo/hooks/check-shim.sh 2>&1)"
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
 case "$out" in
   *"not parked in any slot"*) bad "quiet once parked" "no warning" "$out" ;;
   *"parked the active account"*) bad "does not re-park" "no second park" "$out" ;;
@@ -359,6 +362,8 @@ chmod 644 "$CLAUDE_CONFIG_DIR/.credentials.json"
 "$CS" save perm >/dev/null 2>&1
 checkeq "parked slot is 600" "600" "$(stat -c '%a' "$HOME/.claude-accounts/perm.credentials.json")"
 checkeq "park dir is 700"    "700" "$(stat -c '%a' "$HOME/.claude-accounts")"
+# No token in the identity file, but it records an account email — keep it 600 too.
+checkeq "parked identity is 600" "600" "$(stat -c '%a' "$HOME/.claude-accounts/perm.oauthAccount.json")"
 checkeq "save does not loosen the parked copy" "600" "$(stat -c '%a' "$HOME/.claude-accounts/perm.credentials.json")"
 "$CS" use perm >/dev/null 2>&1
 checkeq "use writes the live credential as 600 (tightens 644)" "600" \
@@ -402,6 +407,39 @@ case "$out" in
   *) ok "no '(unparseable credential)' noise" ;;
 esac
 checkeq "missing credential prints exactly one line" "1" "$(printf '%s\n' "$out" | grep -c .)"
+echo
+
+echo "=============================================="
+echo " 5b. slot names cannot escape the park directory"
+echo "=============================================="
+# Regression guard: validation was originally only on `save`, so
+# `rm '../victim/secret'` deleted a file OUTSIDE ~/.claude-accounts. On the file
+# backend a slot name becomes a path component, so every command taking a name
+# must validate it — not just the one that creates slots.
+newhome 5b
+export CLAUDESWITCH_FORCE=1
+mk tok-live pro live@example.com
+mkdir -p "$HOME/victim" "$HOME/.claude-accounts"
+printf 'SENSITIVE' > "$HOME/victim/secret.credentials.json"
+
+for bad in '../victim/secret' '../../etc/passwd' 'a/b' '..' '.' 'a;id' '$(id)' 'a b' '-x'; do
+  rejected=0
+  for cmd in rm use save; do
+    out="$("$CS" "$cmd" "$bad" 2>&1)"
+    case "$out" in *"slot name may"*) ;; *) rejected=1 ;; esac
+  done
+  [ "$rejected" -eq 0 ] && ok "rejected by save/use/rm: '$bad'" \
+    || bad "rejected by save/use/rm: '$bad'" "slot name error" "$out"
+done
+[ -f "$HOME/victim/secret.credentials.json" ] \
+  && ok "file outside the park dir was NOT deleted" \
+  || bad "file outside the park dir was NOT deleted" "intact" "deleted"
+
+# Legitimate names must keep working — the guard must not be overzealous.
+for good in work my.account a-b_c _previous A1; do
+  out="$("$CS" save "$good" 2>&1)"
+  check "valid name accepted: '$good'" "saved to slot '$good'" "$out"
+done
 echo
 
 echo "=============================================="
@@ -473,10 +511,10 @@ echo "=============================================="
 echo " 10. SessionStart hook"
 echo "=============================================="
 newhome 10
-out="$(bash /repo/hooks/check-shim.sh 2>&1)"; rc=$?
+out="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"; rc=$?
 checkeq "hook exits 0" "0" "$rc"
 check "hook prompts for shim install" "install-shim" "$out"
-out2="$(bash /repo/hooks/check-shim.sh 2>&1)"
+out2="$(bash "$REPO/hooks/check-shim.sh" 2>&1)"
 checkeq "hook stays quiet on second run (nag-once)" "" "$out2"
 echo
 

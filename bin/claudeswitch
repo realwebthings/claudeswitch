@@ -74,6 +74,24 @@ LIVE_FILE="$CONFIG_DIR/.credentials.json"
 
 die() { echo "claudeswitch: $*" >&2; exit 1; }
 
+# Every command that takes a slot name must validate it. On the file backend a
+# name becomes a path component, so `rm ../../x` would delete outside the park
+# directory; `..` alone would also escape. Validate on read and delete paths too,
+# not just `save`.
+assert_slot_name() {
+  [ -n "$1" ] || die "slot name must not be empty"
+  case "$1" in
+    *[!A-Za-z0-9._-]*)
+      die "slot name may only contain letters, digits, dot, dash, underscore" ;;
+    .|..)
+      die "slot name may not be '.' or '..'" ;;
+    -*)
+      # A leading dash makes the resulting filename look like an option to rm,
+      # find, cp and friends. Cheaper to reject than to audit every call site.
+      die "slot name may not start with '-'" ;;
+  esac
+}
+
 # ------------------------------------------------------------------ backend ---
 # All platform-specific knowledge is confined to four operations:
 #   backend_read_live / backend_write_slot / backend_slot_names / backend_*
@@ -298,6 +316,10 @@ save_identity() {
   local name="$1"
   [ -f "$GLOBAL_JSON" ] || { echo "  (no ~/.claude.json — identity not parked)"; return 0; }
   mkdir -p "$PARK_DIR"
+  chmod 700 "$PARK_DIR" 2>/dev/null || true
+  # No token in here, but it does record an account email. Keep it consistent with
+  # everything else claudeswitch owns rather than leaving it world-readable.
+  ( umask 077
   python3 - "$GLOBAL_JSON" "$PARK_DIR/$name.oauthAccount.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -307,6 +329,8 @@ if not acct:
     sys.exit(0)
 json.dump(acct, open(sys.argv[2], "w"), indent=2)
 PY
+  )
+  chmod 600 "$PARK_DIR/$name.oauthAccount.json" 2>/dev/null || true
 }
 
 # Rewrite one key in ~/.claude.json. That file also holds project history and
@@ -447,7 +471,7 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   save)
     name="${1:-}"; [ -n "$name" ] || die "usage: claudeswitch save <name>"
-    case "$name" in *[!A-Za-z0-9._-]*) die "slot name may only contain letters, digits, dot, dash, underscore" ;; esac
+    assert_slot_name "$name"
     warn_other_sessions
     data="$(read_live)"
 
@@ -489,6 +513,7 @@ case "$cmd" in
 
   use)
     name="${1:-}"; [ -n "$name" ] || die "usage: claudeswitch use <name>"
+    assert_slot_name "$name"
     # Check the slot exists before the session guard, so a typo reports the
     # typo rather than telling the user to quit their sessions for nothing.
     slot_exists "$name" \
@@ -538,6 +563,7 @@ case "$cmd" in
 
   rm|remove|delete)
     name="${1:-}"; [ -n "$name" ] || die "usage: claudeswitch rm <name>"
+    assert_slot_name "$name"
     slot_exists "$name" || die "no slot '$name'"
     delete_slot "$name"
     rm -f "$PARK_DIR/$name.oauthAccount.json"

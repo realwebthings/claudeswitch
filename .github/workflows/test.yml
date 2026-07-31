@@ -1,0 +1,59 @@
+name: test
+
+# The file backend can only be tested on a real Linux userspace, and the
+# maintainer's machine is a Mac (Keychain backend). CI is therefore the only place
+# the Linux/WSL path gets exercised on every change — it caught a path-traversal
+# bug and a stale-token identity bug that local macOS testing could not.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Runs on the ubuntu runner and drives Docker itself, rather than using
+  # `container:`. The distro images are minimal and lack git/node, which
+  # actions/checkout requires — so the checkout happens on the host and the repo is
+  # mounted into each container read-only. This is also exactly what
+  # ./test/run-docker.sh does locally, so CI and local runs cannot drift.
+  file-backend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Alpine is included on purpose: BusyBox find/stat/sed is where
+        # non-portable shell breaks while still passing on Debian.
+        distro: [debian, ubuntu, alpine, fedora]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run file-backend suite on ${{ matrix.distro }}
+        run: ./test/run-docker.sh ${{ matrix.distro }}
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint shell scripts
+        # Warning severity and above. SC2009 (ps|grep) and SC2012 (ls) are
+        # deliberate here and sit at info level, so they do not fail CI.
+        run: ./test/run-docker.sh shellcheck
+
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check bash syntax and JSON manifests
+        run: |
+          for f in bin/claudeswitch hooks/check-shim.sh test/*.sh; do
+            bash -n "$f" && echo "ok  $f"
+          done
+          python3 -c "
+          import json
+          for f in ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json']:
+              json.load(open(f)); print('ok ', f)
+          "
+
+      # A plugin whose version does not move makes 'claude plugin update' a no-op
+      # for users, so keep the manifest version in step with released behaviour.
+      - name: Show plugin version
+        run: python3 -c "import json;print('version:', json.load(open('.claude-plugin/plugin.json'))['version'])"
