@@ -351,21 +351,11 @@ save_identity() {
   mkdir -p "$PARK_DIR"
   chmod 700 "$PARK_DIR" 2>/dev/null || true
 
-  # Pull the oauthAccount object. The value starts with { on the same line as
-  # the key and ends with } before the next top-level key. sed range capture.
+  # ~/.claude.json is compact single-line JSON. Extract the oauthAccount value
+  # (a flat {...} object) with a portable grep — no multiline sed needed.
   local acct
-  acct="$(sed -n '/"oauthAccount"[[:space:]]*:/,/^[[:space:]]*}/{ 
-    /^[[:space:]]*"[a-zA-Z]/{ /oauthAccount/!q }
-    p
-  }' "$GLOBAL_JSON" 2>/dev/null \
-    | sed -n '/oauthAccount/{s/.*"oauthAccount"[[:space:]]*:[[:space:]]*//;p}; /^[[:space:]]*[{}]/p' \
-    | head -50 || true)"
-
-  # Simpler fallback: grab the raw value with a single-pass grep for the block
-  if [ -z "$acct" ]; then
-    acct="$(grep -o '"oauthAccount"[[:space:]]*:[[:space:]]*{[^}]*}' "$GLOBAL_JSON" 2>/dev/null \
-      | sed 's/.*"oauthAccount"[[:space:]]*:[[:space:]]*//' || true)"
-  fi
+  acct="$(grep -o '"oauthAccount"[[:space:]]*:[[:space:]]*{[^}]*}' "$GLOBAL_JSON" 2>/dev/null \
+    | sed 's/.*"oauthAccount"[[:space:]]*:[[:space:]]*//' | head -1 || true)"
 
   if [ -z "$acct" ]; then
     echo "  (no oauthAccount key in ~/.claude.json — identity not parked)"
