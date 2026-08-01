@@ -16,8 +16,10 @@ die() { echo "install: $*" >&2; exit 1; }
 
 # Resolve version — try releases API first, fall back to main branch
 if [ -z "$VERSION" ]; then
-  VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"])' 2>/dev/null || true)"
+  if command -v python3 >/dev/null 2>&1; then
+    VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"])' 2>/dev/null || true)"
+  fi
 fi
 
 echo "Installing claudeswitch ${VERSION:-latest} to $INSTALL_DIR ..."
@@ -48,7 +50,8 @@ case ":$PATH:" in
     case "${SHELL:-}" in
       */zsh)  profile="$HOME/.zshrc" ;;
       */bash)
-        [ "$(uname -s)" = "Darwin" ] && profile="$HOME/.bash_profile" || profile="$HOME/.bashrc" ;;
+        [ "$(uname -s 2>/dev/null)" = "Darwin" ] && profile="$HOME/.bash_profile" || profile="$HOME/.bashrc" ;;
+      */fish) profile="" ;;
       *)      profile="$HOME/.profile" ;;
     esac
     echo

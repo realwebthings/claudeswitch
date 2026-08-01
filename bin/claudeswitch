@@ -7,16 +7,12 @@
 #   claudeswitch list            show parked slots and which is active
 #   claudeswitch whoami          show the active account
 #   claudeswitch rm <name>       delete a parked slot
-#   claudeswitch install-shim    make this command available outside Claude Code
+#   claudeswitch update          update to the latest version
 #
 # Losing an account is the failure that costs a /login, so two guards are on by
 # default: `use` parks the outgoing credential to "_previous" if it isn't already
 # in a slot, and `save` refuses to overwrite a slot holding a different account.
 # Both are bypassed with CLAUDESWITCH_FORCE=1.
-#
-# Run install-shim once after installing the plugin. Claude Code only puts a
-# plugin's bin/ on PATH inside its own sessions, but switching accounts requires
-# Claude Code to be quit — so the command must work in a plain terminal too.
 #
 # Why this is needed
 # ------------------
@@ -570,167 +566,10 @@ case "$cmd" in
     echo "removed slot '$name' (the active credential is untouched)"
     ;;
 
-  install-shim)
-    # Claude Code only puts a plugin's bin/ on PATH inside its own sessions.
-    # But `use` requires Claude Code to be QUIT, so the command has to work in a
-    # plain terminal too. This installs a tiny forwarder that locates whatever
-    # plugin version is currently installed, so it survives plugin updates.
-    # Prefer a directory the user's PATH already contains, so the command works
-    # in a new terminal with no profile edit and no reload. Only fall back to
-    # ~/.local/bin (creating it) when none of the usual spots is on PATH.
-    if [ -n "${1:-}" ]; then
-      target_dir="$1"
-    else
-      target_dir=""
-      for cand in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
-        case ":$PATH:" in
-          *":$cand:"*) [ -d "$cand" ] && [ -w "$cand" ] && { target_dir="$cand"; break; } ;;
-        esac
-      done
-      [ -n "$target_dir" ] || target_dir="$HOME/.local/bin"
-    fi
-    mkdir -p "$target_dir"
-    shim="$target_dir/claudeswitch"
-
-    if [ -e "$shim" ] && ! grep -q 'claudeswitch-shim' "$shim" 2>/dev/null; then
-      die "$shim already exists and is not a claudeswitch shim — move it aside first"
-    fi
-
-    # `env bash` rather than /bin/bash: on NixOS and some BSDs bash isn't there.
-    cat > "$shim" <<'SHIM'
-#!/usr/bin/env bash
-# claudeswitch-shim — forwards to the installed claudeswitch plugin.
-# A plugin's bin/ is only on PATH inside Claude Code sessions, but switching
-# accounts requires Claude Code to be quit. This makes the command available
-# in any shell. Regenerate with: claudeswitch install-shim
-# No `set -e` here: a failed lookup must fall through to the message below
-# rather than exiting silently.
-for root in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME/.claude"; do
-  # Newest version directory wins, so plugin updates need no reinstall.
-  real="$(ls -1d "$root"/plugins/cache/claudeswitch/claudeswitch/*/bin/claudeswitch 2>/dev/null | sort -V | tail -1)"
-  if [ -n "$real" ] && [ -x "$real" ]; then
-    exec "$real" "$@"
-  fi
-done
-echo "claudeswitch: plugin not found. Install it in Claude Code:" >&2
-echo "  /plugin marketplace add https://github.com/realwebthings/claudeswitch" >&2
-echo "  /plugin install claudeswitch" >&2
-exit 1
-SHIM
-    chmod +x "$shim"
-    echo "installed shim: $shim"
-
-    case ":$PATH:" in
-      *":$target_dir:"*)
-        echo "$target_dir is already on your PATH — done."
-        echo "Open a new terminal (or run 'hash -r') if the command isn't found yet."
-        ;;
-      *)
-        path_line="export PATH=\"$target_dir:\$PATH\""
-        # Match the profile to the login shell rather than assuming zsh.
-        # For bash the right file differs by platform: macOS Terminal starts a
-        # login shell (~/.bash_profile), while on Linux the interactive shell
-        # reads ~/.bashrc and ~/.bash_profile often doesn't exist — appending to
-        # a file nothing sources would look like success and change nothing.
-        case "${SHELL:-}" in
-          */bash)
-            if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-              profile="$HOME/.bash_profile"
-            else
-              profile="$HOME/.bashrc"
-            fi
-            ;;
-          */zsh)  profile="$HOME/.zshrc" ;;
-          */fish) profile="" ;;   # fish syntax differs; don't guess
-          *)
-            # Unknown shell: ~/.profile is the POSIX-sourced fallback.
-            [ "$(uname -s 2>/dev/null)" = "Darwin" ] && profile="$HOME/.zshrc" || profile="$HOME/.profile"
-            ;;
-        esac
-
-        echo
-        echo "$target_dir is not on your PATH."
-
-        if [ -z "$profile" ]; then
-          echo "Add the equivalent of this to your shell config:"
-          echo "  $path_line"
-          exit 0
-        fi
-
-        # A profile usually writes $HOME/... rather than the expanded path, so
-        # check both spellings before offering to add a duplicate line.
-        target_tilde="\$HOME${target_dir#"$HOME"}"
-        if [ -f "$profile" ] && { grep -qF "$target_dir" "$profile" 2>/dev/null \
-             || grep -qF "$target_tilde" "$profile" 2>/dev/null; }; then
-          echo "$profile already adds it to PATH — this shell just hasn't reloaded."
-          echo "run: source $profile"
-          exit 0
-        fi
-
-        # Only offer when there's a terminal to answer on; in a non-interactive
-        # run (a hook, a script) just print what to do.
-        if [ ! -t 0 ]; then
-          echo "Add this to $profile, then reload it:"
-          echo "  $path_line"
-          exit 0
-        fi
-
-        printf 'Add it to %s now? [y/N] ' "$profile"
-        read -r reply
-        case "$reply" in
-          [yY]|[yY][eE][sS])
-            {
-              echo ""
-              echo "# added by claudeswitch install-shim"
-              echo "$path_line"
-            } >> "$profile"
-            echo "added to $profile"
-            echo "run: source $profile"
-            ;;
-          *)
-            echo "left alone. Add this yourself, then reload:"
-            echo "  $path_line"
-            ;;
-        esac
-        ;;
-    esac
-    ;;
-
-  internal-unparked)
-    # Quiet, machine-readable: prints the active account's email if it is NOT in
-    # any parked slot, nothing otherwise. Used by the SessionStart hook, so it
-    # must never prompt, never write, and never fail loudly.
-    data="$(read_live_quiet)"
-    [ -n "$data" ] || exit 0
-    live_is_parked "$data" >/dev/null && exit 0
-    # Only report when the account can actually be named; an offline lookup
-    # would otherwise produce a confusing empty warning.
-    email="$(identify "$data")"
-    [ -n "$email" ] && echo "$email"
-    exit 0
-    ;;
-
-  internal-autopark)
-    # Park the active credential under an auto-generated slot name, printing the
-    # slot used. Only invoked when the user has opted in.
-    data="$(read_live_quiet)"
-    [ -n "$data" ] || exit 0
-    live_is_parked "$data" >/dev/null && exit 0
-    # Same consistency rule as `save`: never park a credential whose token and
-    # ~/.claude.json disagree, or the slot ends up mislabeled.
-    tok_email="$(identify "$data")"
-    ui_email="$(json_email)"
-    [ -n "$tok_email" ] && [ -n "$ui_email" ] && [ "$tok_email" != "$ui_email" ] && exit 0
-    # Derive a readable slot name from the email's local part; fall back to a
-    # generic name, and never silently overwrite an existing slot.
-    base="$(printf '%s' "${tok_email%%@*}" | tr -cd 'A-Za-z0-9._-')"
-    [ -n "$base" ] || base="autoparked"
-    slot="$base"; n=2
-    while slot_exists "$slot"; do slot="${base}-${n}"; n=$((n+1)); done
-    write_slot "$slot" "$data"
-    save_identity "$slot" >/dev/null 2>&1 || true
-    echo "$slot"
-    exit 0
+  update)
+    # Re-run the installer to pull the latest version from GitHub.
+    curl -fsSL "https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh" \
+      | bash -s -- "${1:-}"
     ;;
 
   help|--help|-h)
