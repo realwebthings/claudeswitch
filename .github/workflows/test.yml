@@ -42,18 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check bash syntax and JSON manifests
+      - name: Check bash syntax
         run: |
-          for f in bin/claudeswitch hooks/check-shim.sh test/*.sh; do
+          for f in bin/claudeswitch install.sh test/*.sh; do
             bash -n "$f" && echo "ok  $f"
           done
-          python3 -c "
-          import json
-          for f in ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json']:
-              json.load(open(f)); print('ok ', f)
-          "
-
-      # A plugin whose version does not move makes 'claude plugin update' a no-op
-      # for users, so keep the manifest version in step with released behaviour.
-      - name: Show plugin version
-        run: python3 -c "import json;print('version:', json.load(open('.claude-plugin/plugin.json'))['version'])"
