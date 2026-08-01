@@ -397,26 +397,28 @@ restore_identity() {
 
   cp "$GLOBAL_JSON" "${GLOBAL_JSON}.claudeswitch.bak"
 
-  # Replace the oauthAccount value in-place. The value is a {...} block.
-  # Strategy: delete the old oauthAccount line+block, insert the new one.
-  # Works for both compact  "oauthAccount":{...}  and pretty-printed forms.
-  sed '/\"oauthAccount\"[[:space:]]*:/d' "$GLOBAL_JSON" > "$tmp"
+  # ~/.claude.json is compact single-line JSON: {"oauthAccount":{...},"other":...}
+  # Replace the oauthAccount value using a portable sed that works on BusyBox.
+  # Step 1: remove the existing oauthAccount key+value (handles nested braces by
+  #         matching the minimal {...} block — sufficient for the flat object
+  #         Claude Code writes).
+  # Step 2: inject the new value before the final closing brace.
+  local content
+  content="$(cat "$GLOBAL_JSON")"
 
-  # Insert the new oauthAccount before the closing } of the top-level object.
-  # Find the last } line and insert before it.
-  local last_brace
-  last_brace="$(grep -n '^}' "$tmp" | tail -1 | cut -d: -f1)"
-  if [ -n "$last_brace" ]; then
-    local before after
-    before="$(head -n $(( last_brace - 1 )) "$tmp")"
-    after="$(tail -n +"$last_brace" "$tmp")"
-    # Add a comma to the previous last line if it doesn't already have one
-    before="$(printf '%s' "$before" | sed '$ s/[^,{[]$/&,/')"
-    printf '%s\n  "oauthAccount": %s\n%s\n' "$before" "$acct_json" "$after" > "$tmp"
-  else
-    # Fallback: just append (shouldn't happen with valid JSON)
-    printf '  "oauthAccount": %s\n' "$acct_json" >> "$tmp"
-  fi
+  # Remove existing oauthAccount key+value (compact form: "oauthAccount":{...})
+  # The value is a flat object with no nested braces in practice.
+  local stripped
+  stripped="$(printf '%s' "$content" | sed 's/,*"oauthAccount":{[^}]*}//g; s/{,/{/g')"
+
+  # Insert before the final }
+  # stripped is now {...} without oauthAccount; inject it back.
+  local inner closing
+  # Everything except the last character (the closing })
+  inner="$(printf '%s' "$stripped" | sed 's/}$//')"
+  # Add comma separator if inner doesn't end with { (i.e. there are other keys)
+  [ "${inner: -1}" != "{" ] && inner="${inner},"
+  printf '%s"oauthAccount":%s}' "$inner" "$acct_json" > "$tmp"
 
   mv -f "$tmp" "$GLOBAL_JSON"
 }
