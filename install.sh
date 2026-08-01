@@ -16,10 +16,8 @@ die() { echo "install: $*" >&2; exit 1; }
 
 # Resolve version — try releases API first, fall back to main branch
 if [ -z "$VERSION" ]; then
-  if command -v python3 >/dev/null 2>&1; then
-    VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-      | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"])' 2>/dev/null || true)"
-  fi
+  VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+    | grep '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -1 || true)"
 fi
 
 echo "Installing claudeswitch ${VERSION:-latest} to $INSTALL_DIR ..."
