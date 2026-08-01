@@ -209,14 +209,50 @@ warn_other_sessions() {
 }
 
 assert_safe_to_switch() {
-  [ -n "${CLAUDESWITCH_FORCE:-}" ] && return 0
   local pids; pids="$(running_session_pids)"
   [ -z "$pids" ] && return 0
-  echo "claudeswitch: refusing to switch — other Claude Code sessions are running (pid: $pids)." >&2
-  echo "  A live session rewrites the credential on token refresh and would" >&2
-  echo "  revert this switch. Quit them, then retry." >&2
-  echo "  To override: CLAUDESWITCH_FORCE=1 claudeswitch use <name>" >&2
-  exit 1
+
+  if [ -n "${CLAUDESWITCH_FORCE:-}" ]; then
+    echo "claudeswitch: force-killing Claude Code sessions (pid:$pids) ..."
+    kill $pids 2>/dev/null || true
+    sleep 1
+    # hard kill anything still alive
+    local still; still="$(running_session_pids)"
+    [ -n "$still" ] && kill -9 $still 2>/dev/null || true
+    return 0
+  fi
+
+  echo "claudeswitch: Claude Code is running (pid:$pids)."
+  printf "  Kill it and switch? [y/N] "
+  # When piped (non-interactive), read from /dev/tty so the prompt works
+  local reply
+  if [ -t 0 ]; then
+    read -r reply
+  else
+    read -r reply </dev/tty 2>/dev/null || reply="n"
+  fi
+  case "$reply" in
+    [yY]*)
+      echo "  Stopping Claude Code ..."
+      kill $pids 2>/dev/null || true
+      # wait up to 5s for graceful exit
+      local i=0
+      while [ $i -lt 10 ]; do
+        sleep 0.5
+        pids="$(running_session_pids)"
+        [ -z "$pids" ] && break
+        i=$(( i + 1 ))
+      done
+      # force-kill if still alive
+      pids="$(running_session_pids)"
+      [ -n "$pids" ] && { kill -9 $pids 2>/dev/null || true; sleep 0.5; }
+      echo "  Stopped."
+      ;;
+    *)
+      echo "claudeswitch: cancelled. Quit Claude Code manually and retry." >&2
+      exit 1
+      ;;
+  esac
 }
 
 # ------------------------------------------------------------ JSON helpers ----
@@ -502,7 +538,7 @@ case "$cmd" in
     echo "active account = slot '$name'"
     printf '%s' "$data" | summarize
     echo
-    echo "note: restart Claude Code to pick this up."
+    echo "note: open Claude Code to start using this account."
     ;;
 
   list)
