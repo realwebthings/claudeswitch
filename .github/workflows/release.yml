@@ -15,7 +15,7 @@ jobs:
       - name: Read version
         id: ver
         run: |
-          VERSION="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])")"
+          VERSION="$(cat VERSION | tr -d '[:space:]')"
           echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check if tag exists
