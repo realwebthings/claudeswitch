@@ -14,6 +14,32 @@ case "${VERSION:-}" in --version) VERSION="${2:-}" ;; esac
 
 die() { echo "install: $*" >&2; exit 1; }
 
+print_banner() {
+  local v="${VERSION:-latest}"
+  echo ""
+  echo "  ╔═══════════════════════════════════════════════╗"
+  echo "  ║        CLAUDESWITCH  ${v}           ║"
+  echo "  ║  Two Claude accounts, one machine.        ║"
+  echo "  ╚═══════════════════════════════════════════════╝"
+  echo ""
+  echo "  COMMANDS"
+  echo "    claudeswitch save <name>   park the current account"
+  echo "    claudeswitch use  <name>   switch to a parked account"
+  echo "    claudeswitch list          show all slots + active account"
+  echo "    claudeswitch whoami        show the active account"
+  echo "    claudeswitch rm   <name>   delete a slot"
+  echo "    claudeswitch update        update to latest version"
+  echo ""
+  echo "  QUICK START"
+  echo "    1. claudeswitch save work       # park current account"
+  echo "    2. /login as second account     # in Claude Code"
+  echo "    3. claudeswitch save personal   # park second account"
+  echo "    4. claudeswitch use work        # switch (then restart Claude Code)"
+  echo ""
+  echo "  Restart Claude Code after every switch."
+  echo ""
+}
+
 # Resolve version — try releases API first, fall back to main branch
 if [ -z "$VERSION" ]; then
   VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
@@ -40,7 +66,7 @@ echo "Installed: $INSTALL_DIR/claudeswitch"
 # PATH check
 case ":$PATH:" in
   *":$INSTALL_DIR:"*)
-    echo "Done. Run: claudeswitch list"
+    print_banner
     ;;
   *)
     tilde_dir="\$HOME${INSTALL_DIR#"$HOME"}"
@@ -71,5 +97,6 @@ case ":$PATH:" in
       echo "Add this to $profile:"
       echo "  $path_line"
     fi
+    print_banner
     ;;
 esac
