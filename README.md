@@ -1,7 +1,6 @@
 # claudeswitch
 
-**Two Claude accounts, one machine. `/login` keeps logging you out of the other
-one.**
+**Multiple Claude accounts, one machine. `/login` keeps logging you out of the others.**
 
 Work account for work, personal account for side projects — but Claude Code stores
 exactly one credential. Signing into the second account destroys the first, so

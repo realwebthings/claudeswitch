@@ -19,7 +19,7 @@ print_banner() {
   echo ""
   echo "  ╔═══════════════════════════════════════════════════════════════╗"
   echo "  ║              CLAUDESWITCH  ${v}                               ║"
-  echo "  ║       Two Claude accounts, one machine. Zero re-logins.       ║"
+  echo "  ║       Multiple Claude accounts, one machine. Zero re-logins.      ║"
   echo "  ╚═══════════════════════════════════════════════════════════════╝"
   echo ""
   echo "  COMMANDS"
