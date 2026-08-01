@@ -73,32 +73,29 @@ timeout, and every caller treats failure as non-fatal: you get
 
 Nothing else contacts the network. There is **no telemetry, no analytics, no
 crash reporting, no phone-home, and no backend** — there is nothing to send data
-to. The tool is a single Bash script plus a hook; the only other binaries it
-invokes are `security` (macOS Keychain), `python3` (JSON parsing), and `curl` (that
-one request).
+to. The only other binaries it invokes are `security` (macOS Keychain) and `curl` (that one request). No python, no node, no other dependencies.
 
 The two other URLs in the source are text in error messages — the GitHub repo and
 issues links — not requests.
 
 ## Installation
 
-claudeswitch **downloads nothing at install time**. It ships as a Claude Code
-plugin, so `/plugin install` fetches the repo and that is the whole install. There
-is no curl-pipe-to-shell installer, no post-install script, and no fetching of
-code from a second location — so there is no download to verify with a checksum.
+claudeswitch installs via a single curl command:
 
-`claudeswitch install-shim` writes one small forwarder script to a directory on
-your PATH (default `~/.local/bin/claudeswitch`). It refuses to overwrite a file
-that is not already a claudeswitch shim, and it will not edit your shell profile
-without asking. The SessionStart hook deliberately only *reports* that the shim is
-missing — a plugin should not add executables to your PATH unasked.
+```bash
+curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash
+```
+
+The installer downloads only `bin/claudeswitch` from the latest GitHub release.
+There is no post-install script and no fetching of code from a second location.
 
 ## Deliberate safety behaviors
 
 These exist because a half-applied switch is worse than a failed one:
 
-- **`use` refuses while other Claude Code sessions are running.** A live session
-  rewrites the credential on token refresh and would silently revert the switch.
+- **`use` prompts to kill running Claude Code sessions** before switching, rather
+  than refusing. A graceful SIGTERM is sent first, then SIGKILL after 5 seconds.
+  `CLAUDESWITCH_FORCE=1` skips the prompt.
 - **`save` refuses when the stored token and `~/.claude.json` name different
   accounts.** That mismatch is what mislabels a slot — parking the wrong account's
   token under a name you trust. This check cannot be forced.
