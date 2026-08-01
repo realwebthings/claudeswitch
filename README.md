@@ -9,9 +9,6 @@ switching means a full browser OAuth flow every time.
 claudeswitch parks each account in its own slot, so switching is one command:
 
 ```bash
-claudeswitch save work        # park the account you're signed into (once)
-claudeswitch save personal    # park the other one (once)
-
 claudeswitch use work         # switch — no /login, no browser
 ```
 
@@ -37,7 +34,7 @@ already on your PATH) and offers to update your shell profile if needed.
 
 **Specific version:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash -s -- --version v2.0.5
+curl -fsSL https://raw.githubusercontent.com/realwebthings/claudeswitch/main/install.sh | bash -s -- --version v2.0.6
 ```
 
 **Manual download** — grab `bin/claudeswitch` from any
@@ -48,6 +45,35 @@ anywhere on your PATH, and `chmod +x` it.
 ```bash
 claudeswitch update
 ```
+
+---
+
+## Commands
+
+```bash
+claudeswitch use <name>      # switch accounts (prompts to kill Claude Code if running)
+claudeswitch list            # who's parked, who's active
+claudeswitch whoami          # active account only
+claudeswitch save <name>     # park the current account into a named slot
+claudeswitch rm <name>       # delete a parked slot
+claudeswitch update          # update to latest version
+claudeswitch help            # full help
+```
+
+**Switching while Claude Code is running:** `claudeswitch use` detects running
+sessions and prompts:
+
+```
+claudeswitch: Claude Code is running (pid: 12345).
+
+  ⚠️  WARNING: Killing Claude Code will close all active sessions.
+  Any unsaved work or ongoing tasks in Claude Code will be lost.
+
+  Kill it and switch? [y/N]
+```
+
+Answer `y` and it kills Claude Code, switches the account, then tells you to
+reopen. Answer `n` to cancel. Use `CLAUDESWITCH_FORCE=1` to skip the prompt.
 
 ---
 
@@ -99,35 +125,6 @@ active account:
 ```
 
 Slot names are arbitrary labels — use whatever you like.
-
----
-
-## Daily use
-
-```bash
-claudeswitch use work        # switch accounts (prompts to kill Claude Code if running)
-claudeswitch list            # who's parked, who's active
-claudeswitch whoami          # active account only
-claudeswitch save <name>     # re-park after a fresh /login
-claudeswitch rm <name>       # delete a parked slot
-claudeswitch update          # update to latest version
-claudeswitch help            # full help
-```
-
-**Switching while Claude Code is running:** `claudeswitch use` detects running
-sessions and prompts:
-
-```
-claudeswitch: Claude Code is running (pid: 12345).
-
-  ⚠️  WARNING: Killing Claude Code will close all active sessions.
-  Any unsaved work or ongoing tasks in Claude Code will be lost.
-
-  Kill it and switch? [y/N]
-```
-
-Answer `y` and it kills Claude Code, switches the account, then tells you to
-reopen. Answer `n` to cancel. Use `CLAUDESWITCH_FORCE=1` to skip the prompt.
 
 ---
 
