@@ -223,6 +223,10 @@ assert_safe_to_switch() {
   fi
 
   echo "claudeswitch: Claude Code is running (pid:$pids)."
+  echo
+  echo "  ⚠️  WARNING: Killing Claude Code will close all active sessions."
+  echo "  Any unsaved work or ongoing tasks in Claude Code will be lost."
+  echo
   printf "  Kill it and switch? [y/N] "
   # When piped (non-interactive), read from /dev/tty so the prompt works
   local reply
